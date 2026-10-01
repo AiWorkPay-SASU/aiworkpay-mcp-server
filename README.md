@@ -159,3 +159,21 @@ npm run typecheck
 npm test        # tests unitaires + client MCP réel connecté en mémoire à une fausse API AIWorkPay
 npm run build
 ```
+
+
+### Financial authorization
+
+`confirm=true` is an agent instruction, not proof of human consent. A key with
+`missions:approve` explicitly delegates irreversible result approval and payout.
+Give agents read/write scopes only when a human must approve results in the dashboard.
+Creation always uses Checkout; no payment method is sent by this MCP.
+
+### Remote deployment
+
+The Dockerfile runs the HTTP transport and accepts Railway's `PORT`. Set
+`AIWORKPAY_BASE_URL` to the deployed **application** (for example
+`https://app.aiworkpay.fr`), not the marketing website. Set `MCP_ALLOWED_HOSTS`
+to the MCP service's public hostname and its healthcheck hostname if different.
+Keep HTTPS at the proxy. No shared `AIWORKPAY_API_KEY` is needed in HTTP mode:
+each client sends its own key. `/healthz` is liveness only; application readiness
+is checked at the application's `/api/health`.

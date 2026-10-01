@@ -72,7 +72,7 @@ function nextAction(mission: Mission, status: AgentStatus, pastDeadline: boolean
     case 'delivered':
       return 'The result is available: call get_mission_result, then approve_result to accept it and pay the Payworker, or request_changes to send it back.';
     case 'completed':
-      return 'Validated and paid. Call get_mission_result to read the result.';
+      return 'Result approved. Payout may still be pending; check AIWorkPay. Call get_mission_result to read the result.';
     case 'canceled':
       return 'Canceled; nothing more will happen. Any payment made was refunded.';
   }
@@ -104,3 +104,4 @@ export function missionView(mission: Mission, now = new Date()) {
     next_action: nextAction(mission, status, pastDeadline),
   };
 }
+

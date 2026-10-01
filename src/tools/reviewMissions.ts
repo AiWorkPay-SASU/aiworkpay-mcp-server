@@ -46,7 +46,7 @@ export function registerReviewTools(server: McpServer, deps: { client: Aiworkpay
         if (config.requireConfirmation && !confirmed) {
           const view = missionView(await client.getMission(mission_id));
           if (view.status === 'completed') {
-            return ok({ mission_id, status: 'completed', already_approved: true, next_action: 'Nothing to do: already approved and paid.' });
+            return ok({ mission_id, status: 'completed', already_approved: true, next_action: 'Nothing to do: already approved. Check the payout status in AIWorkPay.' });
           }
           if (view.status !== 'delivered') {
             throw new GuardError('MISSION_NOT_DELIVERED', `Only a delivered mission can be approved (status: ${view.status}).`, {
@@ -75,11 +75,14 @@ export function registerReviewTools(server: McpServer, deps: { client: Aiworkpay
           status: view.status,
           approved: true,
           already_approved: approved.alreadyApproved,
-          payworker_paid: approved.commission?.payworkerAmount ?? null,
+          payworker_amount_due: approved.commission?.payworkerAmount ?? null,
+          payworker_paid: approved.commission?.transferStatus === 'SUCCEEDED' ? approved.commission.payworkerAmount : null,
           platform_fee: approved.commission?.platformFeeAmount ?? null,
           currency: view.currency,
           payout_status: approved.commission ? approved.commission.transferStatus.toLowerCase() : null,
-          next_action: 'Done. Continue your workflow with the result.',
+          next_action: approved.commission?.transferStatus === 'SUCCEEDED'
+            ? 'Result approved and transfer succeeded. Continue your workflow.'
+            : 'Result approved. The transfer is pending or unknown; check AIWorkPay before reporting payment as complete.',
         });
       })
   );
@@ -182,3 +185,4 @@ export function registerReviewTools(server: McpServer, deps: { client: Aiworkpay
       })
   );
 }
+

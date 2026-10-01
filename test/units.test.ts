@@ -175,7 +175,7 @@ describe('api client', () => {
       timeoutMs: 1000,
       fetch: async (_url, init) => {
         seen = new Headers(init?.headers);
-        return new Response(JSON.stringify({ mission: { id: 'm1' }, payment: null }), { status: 201 });
+        return new Response(JSON.stringify({ mission: { id: 'm1', title: 'test', description: 'test', budget: 10, currency: 'EUR', deadline: '2030-01-01', priority: 'MEDIUM', status: 'PAYMENT_PENDING', createdAt: '', updatedAt: '' }, payment: null }), { status: 201 });
       },
     });
     const result = await client.createMission(toCreateRequest(input), 'mcp-abcdefgh');
@@ -216,5 +216,31 @@ describe('api client', () => {
     const error = await slow.getMission('x').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(AiworkpayApiError);
     expect(error).toMatchObject({ code: 'TIMEOUT', status: 0 });
+  });
+});
+
+
+
+describe('reservation and response safety', () => {
+  it('reserves synchronously and prunes expired references', () => {
+    let now = 0;
+    const limiter = new CreationLimiter(1, () => now);
+    expect(limiter.reserve('one')).toBe(0);
+    expect(limiter.reserve('two')).toBeGreaterThan(0);
+    limiter.record('one');
+    now = 3600001;
+    expect(limiter.reserve('two')).toBe(0);
+    expect(limiter.reserve('one')).toBeGreaterThan(0);
+  });
+  it('rejects valid JSON with an invalid mission shape', async () => {
+    const client = new AiworkpayClient({baseUrl: 'https://api.test', apiKey: 'awp_test', timeoutMs: 1000, fetch: async () => new Response('{}')});
+    await expect(client.getMission('m')).rejects.toMatchObject({code: 'INVALID_RESPONSE'});
+  });
+  it('stops oversized proof streams even without Content-Length', async () => {
+    let canceled = false;
+    const stream = new ReadableStream({start(controller) { controller.enqueue(new Uint8Array(20)); }, cancel() { canceled = true; }});
+    const client = new AiworkpayClient({baseUrl: 'https://api.test', apiKey: 'awp_test', timeoutMs: 1000, fetch: async () => new Response(stream)});
+    await expect(client.downloadProof('m','p',10)).rejects.toMatchObject({code: 'PROOF_TOO_LARGE'});
+    expect(canceled).toBe(true);
   });
 });
