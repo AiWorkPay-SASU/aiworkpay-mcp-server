@@ -30,6 +30,10 @@ export class FakeAiworkpayApi {
     if (!this.keys.includes(key)) return json(403, { error: 'Clé API invalide', code: 'INVALID_API_KEY' });
 
     const method = init.method ?? 'GET';
+
+    const action = url.pathname.match(/^\/api\/missions\/([^/]+)\/(cancel|approve|request-changes)$/);
+    if (action && method === 'POST') return this.act(key, decodeURIComponent(action[1]!), action[2]!, body);
+
     const match = url.pathname.match(/^\/api\/missions(?:\/([^/]+))?$/);
     if (!match) return json(404, { error: 'not found' });
     const id = match[1] ? decodeURIComponent(match[1]) : undefined;
@@ -91,6 +95,39 @@ export class FakeAiworkpayApi {
 
     return json(405, { error: 'method' });
   };
+
+  private act(key: string, id: string, action: string, body: { feedback?: string } | undefined): Response {
+    const mission = this.missions.get(id);
+    if (!mission || mission.apiKey !== key) return json(404, { error: 'Mission introuvable', code: 'MISSION_NOT_FOUND' });
+
+    if (action === 'cancel') {
+      if (mission.status === 'CANCELED') return json(200, { mission: strip(mission), payment: 'already_canceled' });
+      if (!['PAYMENT_PENDING', 'PUBLISHED'].includes(mission.status)) {
+        return json(409, { error: 'engagé', code: 'MISSION_NOT_CANCELABLE', details: { status: mission.status } });
+      }
+      const payment = mission.status === 'PUBLISHED' ? 'refunded' : 'checkout_closed';
+      this.advance(id, { status: 'CANCELED' });
+      return json(200, { mission: strip(mission), payment });
+    }
+
+    if (action === 'approve') {
+      if (mission.status === 'COMPLETED') return json(200, { mission: strip(mission), alreadyApproved: true });
+      if (mission.status !== 'DELIVERED') return json(409, { error: 'pas livrée', code: 'MISSION_NOT_DELIVERED' });
+      this.advance(id, { status: 'COMPLETED' });
+      const budget = Number(mission.budget);
+      return json(200, {
+        mission: strip(mission),
+        alreadyApproved: false,
+        commission: { payworkerAmount: budget * 0.9, platformFeeAmount: budget * 0.1, transferStatus: 'SUCCEEDED' },
+      });
+    }
+
+    // request-changes
+    if (mission.status !== 'DELIVERED') return json(409, { error: 'pas livrée', code: 'MISSION_NOT_DELIVERED' });
+    if ((mission.revisionCount ?? 0) >= 3) return json(409, { error: 'limite', code: 'REVISION_LIMIT_REACHED' });
+    this.advance(id, { status: 'IN_PROGRESS', revisionFeedback: body?.feedback, revisionCount: (mission.revisionCount ?? 0) + 1 });
+    return json(200, { mission: strip(mission), revisionsLeft: 3 - (mission.revisionCount ?? 0) });
+  }
 
   /** Simulate the Payworker's side: payment, acceptance, delivery. */
   advance(id: string, patch: Partial<Mission>): void {

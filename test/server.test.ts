@@ -57,15 +57,19 @@ describe('AIWorkPay MCP server', () => {
   beforeEach(async () => start());
   afterEach(async () => client.close());
 
-  it('lists the V1 tools with their annotations', async () => {
+  it('lists the tools with their annotations', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'approve_result',
+      'cancel_mission',
       'create_mission',
       'get_mission',
       'get_mission_result',
       'get_mission_status',
       'list_missions',
+      'request_changes',
     ]);
+    expect(tools.find((t) => t.name === 'approve_result')?.annotations?.destructiveHint).toBe(true);
     expect(tools.find((t) => t.name === 'get_mission_result')?.annotations?.readOnlyHint).toBe(true);
     expect(tools.find((t) => t.name === 'create_mission')?.annotations?.readOnlyHint).toBe(false);
     expect(client.getInstructions()).toContain('payment_url');
@@ -230,5 +234,89 @@ describe('AIWorkPay MCP server', () => {
     const outage = await call('create_mission', { ...order, confirm: true });
     expect(outage.structuredContent?.error).toMatchObject({ code: 'PAYMENT_PROVIDER_UNAVAILABLE', retryable: true });
     expect(String((outage.structuredContent?.error as { request_id: string }).request_id)).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  async function deliveredMission(reference: string) {
+    const created = await call('create_mission', { ...order, confirm: true, client_reference: reference });
+    const id = String(created.structuredContent?.mission_id);
+    api.advance(id, { status: 'DELIVERED', assignedToUserId: 'pw-1', resultNote: 'fait', deliveredAt: new Date().toISOString() });
+    return id;
+  }
+
+  it('approves a delivered result only after confirmation', async () => {
+    const id = await deliveredMission('approve-1');
+    const before = api.requests.length;
+
+    const preview = await call('approve_result', { mission_id: id });
+    expect(preview.structuredContent).toMatchObject({ status: 'preview', approved: false, payworker_receives: 13.5, irreversible: true });
+    expect(api.requests.slice(before).every((r) => r.method === 'GET')).toBe(true);
+    expect(api.missions.get(id)?.status).toBe('DELIVERED');
+
+    const approved = await call('approve_result', { mission_id: id, confirm: true });
+    expect(approved.structuredContent).toMatchObject({
+      status: 'completed',
+      approved: true,
+      already_approved: false,
+      payworker_paid: 13.5,
+      payout_status: 'succeeded',
+    });
+    expect(api.requests.at(-1)).toMatchObject({ method: 'POST', url: `/api/missions/${id}/approve` });
+
+    const again = await call('approve_result', { mission_id: id, confirm: true });
+    expect(again.structuredContent).toMatchObject({ approved: true, already_approved: true });
+  });
+
+  it('refuses to approve a mission that is not delivered', async () => {
+    const created = await call('create_mission', { ...order, confirm: true });
+    const id = String(created.structuredContent?.mission_id);
+    const preview = await call('approve_result', { mission_id: id });
+    expect(preview.structuredContent?.error).toMatchObject({ code: 'MISSION_NOT_DELIVERED', status: 'awaiting_payment' });
+    const direct = await call('approve_result', { mission_id: id, confirm: true });
+    expect(direct.structuredContent?.error).toMatchObject({ code: 'MISSION_NOT_DELIVERED', source: 'aiworkpay_api' });
+  });
+
+  it('requests changes, up to the limit', async () => {
+    const id = await deliveredMission('changes-1');
+    const sent = await call('request_changes', { mission_id: id, feedback: 'La photo de la façade est floue, merci de la refaire.' });
+    expect(sent.structuredContent).toMatchObject({ status: 'in_progress', revisions_requested: 1, revisions_left: 2 });
+    expect(api.requests.at(-1)?.body).toEqual({ feedback: 'La photo de la façade est floue, merci de la refaire.' });
+
+    const status = await call('get_mission_status', { mission_id: id });
+    expect(String(status.structuredContent?.next_action)).toContain('changes you requested');
+
+    const tooShort = await call('request_changes', { mission_id: id, feedback: 'non' });
+    expect(tooShort.isError).toBe(true);
+
+    api.advance(id, { status: 'DELIVERED', revisionCount: 3 });
+    const limited = await call('request_changes', { mission_id: id, feedback: 'Encore une fois, s’il vous plaît.' });
+    expect(limited.structuredContent?.error).toMatchObject({ code: 'REVISION_LIMIT_REACHED' });
+  });
+
+  it('cancels a mission nobody has taken, after confirmation', async () => {
+    const created = await call('create_mission', { ...order, confirm: true });
+    const id = String(created.structuredContent?.mission_id);
+    api.advance(id, { status: 'PUBLISHED' });
+
+    const preview = await call('cancel_mission', { mission_id: id });
+    expect(preview.structuredContent).toMatchObject({ status: 'preview', canceled: false, current_status: 'open' });
+    expect(String(preview.structuredContent?.effect)).toContain('refunded');
+    expect(api.missions.get(id)?.status).toBe('PUBLISHED');
+
+    const canceled = await call('cancel_mission', { mission_id: id, confirm: true });
+    expect(canceled.structuredContent).toMatchObject({ status: 'canceled', canceled: true, payment: 'refunded' });
+
+    const again = await call('cancel_mission', { mission_id: id, confirm: true });
+    expect(again.structuredContent).toMatchObject({ canceled: true, already_canceled: true });
+  });
+
+  it('cannot cancel once a Payworker is engaged', async () => {
+    const created = await call('create_mission', { ...order, confirm: true });
+    const id = String(created.structuredContent?.mission_id);
+    api.advance(id, { status: 'IN_PROGRESS', assignedToUserId: 'pw-1' });
+
+    const preview = await call('cancel_mission', { mission_id: id });
+    expect(preview.structuredContent?.error).toMatchObject({ code: 'MISSION_NOT_CANCELABLE', source: 'mcp_server' });
+    const direct = await call('cancel_mission', { mission_id: id, confirm: true });
+    expect(direct.structuredContent?.error).toMatchObject({ code: 'MISSION_NOT_CANCELABLE', source: 'aiworkpay_api' });
   });
 });

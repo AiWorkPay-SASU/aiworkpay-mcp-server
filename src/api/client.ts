@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { log } from '../log.js';
-import type { CreateMissionRequest, CreateMissionResponse, Mission, MissionStatus } from './types.js';
+import type {
+  ApproveMissionResponse,
+  CancelMissionResponse,
+  CreateMissionRequest,
+  CreateMissionResponse,
+  Mission,
+  MissionStatus,
+  RequestChangesResponse,
+} from './types.js';
 
 /**
  * Thin HTTP client for the AIWorkPay agent API. It authenticates with the
@@ -60,6 +68,25 @@ export class AiworkpayClient {
 
   async getMission(id: string): Promise<Mission> {
     const { data } = await this.request<Mission>('GET', `/api/missions/${encodeURIComponent(id)}`);
+    return data;
+  }
+
+  async cancelMission(id: string): Promise<CancelMissionResponse> {
+    const { data } = await this.request<CancelMissionResponse>('POST', `/api/missions/${encodeURIComponent(id)}/cancel`);
+    return data;
+  }
+
+  async approveMission(id: string): Promise<ApproveMissionResponse> {
+    const { data } = await this.request<ApproveMissionResponse>('POST', `/api/missions/${encodeURIComponent(id)}/approve`);
+    return data;
+  }
+
+  async requestChanges(id: string, feedback: string): Promise<RequestChangesResponse> {
+    const { data } = await this.request<RequestChangesResponse>(
+      'POST',
+      `/api/missions/${encodeURIComponent(id)}/request-changes`,
+      { body: { feedback } }
+    );
     return data;
   }
 

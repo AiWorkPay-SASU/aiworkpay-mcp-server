@@ -57,17 +57,20 @@ function nextAction(mission: Mission, status: AgentStatus, pastDeadline: boolean
   switch (status) {
     case 'awaiting_payment':
       return mission.checkoutUrl
-        ? 'The mission is not published until it is paid. Give payment_url to your human owner; check again later.'
-        : 'The mission is not published until it is paid; check again later.';
+        ? 'The mission is not published until it is paid. Give payment_url to your human owner; check again later. cancel_mission withdraws it.'
+        : 'The mission is not published until it is paid; check again later. cancel_mission withdraws it.';
     case 'open':
       return pastDeadline
-        ? 'The deadline has passed and no Payworker took the mission. Contact the AIWorkPay team to cancel it.'
-        : 'Published, waiting for a Payworker to accept it. Check again later.';
+        ? 'The deadline has passed and no Payworker took the mission. Call cancel_mission to withdraw it and be refunded.'
+        : 'Published, waiting for a Payworker to accept it. Check again later; cancel_mission withdraws it and refunds you.';
     case 'assigned':
+      return 'A Payworker accepted the mission. Check again later.';
     case 'in_progress':
-      return 'A Payworker is working on it. Check again later.';
+      return (mission.revisionCount ?? 0) > 0
+        ? 'The Payworker is applying the changes you requested. Check again later.'
+        : 'A Payworker is working on it. Check again later.';
     case 'delivered':
-      return 'The result is available: call get_mission_result. It is paid out to the Payworker once AIWorkPay validates it.';
+      return 'The result is available: call get_mission_result, then approve_result to accept it and pay the Payworker, or request_changes to send it back.';
     case 'completed':
       return 'Validated and paid. Call get_mission_result to read the result.';
     case 'canceled':
@@ -93,6 +96,7 @@ export function missionView(mission: Mission, now = new Date()) {
     assigned: Boolean(mission.assignedToUserId),
     result_available: isResultAvailable(status),
     delivered_at: mission.deliveredAt ?? null,
+    revisions_requested: mission.revisionCount ?? 0,
     payment_url: status === 'awaiting_payment' ? (mission.checkoutUrl ?? null) : null,
     payment_url_expires_at: status === 'awaiting_payment' ? (mission.checkoutExpiresAt ?? null) : null,
     created_at: mission.createdAt,

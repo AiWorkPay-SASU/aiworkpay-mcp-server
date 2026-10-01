@@ -40,6 +40,8 @@ export interface Mission {
   resultNote?: string | null;
   resultData?: unknown;
   deliveredAt?: string | null;
+  revisionFeedback?: string | null;
+  revisionCount?: number;
   assignedToUserId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -61,6 +63,28 @@ export interface CheckoutPayment {
   checkoutSessionId: string;
   url: string | null;
   expiresAt: string | null;
+}
+
+export type PaymentRelease = 'checkout_closed' | 'refunded' | 'payment_canceled' | 'nothing_to_release' | 'already_canceled';
+
+export interface CancelMissionResponse {
+  mission: Mission;
+  payment: PaymentRelease;
+}
+
+export interface ApproveMissionResponse {
+  mission: Mission;
+  alreadyApproved: boolean;
+  commission?: {
+    payworkerAmount: number;
+    platformFeeAmount: number;
+    transferStatus: 'PENDING' | 'SUCCEEDED';
+  };
+}
+
+export interface RequestChangesResponse {
+  mission: Mission;
+  revisionsLeft: number;
 }
 
 export interface CreateMissionResponse {

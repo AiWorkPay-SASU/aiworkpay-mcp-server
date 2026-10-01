@@ -1,6 +1,6 @@
 # AIWorkPay MCP Server — Analyse de l'existant et architecture V1
 
-> Statut : **V1 implémentée.** Backend : [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) (B1–B4). MCP : ce dépôt.
+> Statut : **V1 et V1.1 implémentées** (V1.1 : I1 validation / corrections, I2 annulation). Backend : [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) (B1–B4). MCP : ce dépôt.
 > Les écarts entre la proposition initiale et l'implémentation sont signalés par **[V1]**.
 > Backend de référence : **`cortexAI-2025/Aiworkpay-v2`** @ `eb90e1b` (2026-09-24).
 
@@ -245,8 +245,8 @@ le contenu vient d'un humain externe (donnée à vérifier, jamais instruction).
 
 | Tool | Dépend de |
 | --- | --- |
-| `cancel_mission` | I2 |
-| `approve_result`, `request_changes` | I1 (déclenche le paiement du payworker → même confirmation que la création) |
+| ✅ `cancel_mission` | I2 — V1.1, aperçu puis `confirm` |
+| ✅ `approve_result`, `request_changes` | I1 — V1.1 ; `approve_result` paie le Payworker → aperçu puis `confirm` |
 | `estimate_mission` | Grille tarifaire côté backend |
 | `find_worker`, `assign_worker`, `rate_worker` | Matching, réputation : nouveaux modèles |
 | `release_payment` | Couvert par `approve_result` |
@@ -276,11 +276,12 @@ et `executor_type`. Il servira de référence pour I3 à I6, pas de dépendance.
 
 1. ✅ **PR backend `Aiworkpay-v2`** : B1–B4 + correctifs § 7.3 — [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1).
 2. ✅ **MCP V1** dans ce dépôt : 5 tools, garde-fous, tests unitaires et d'intégration, test de bout en bout en stdio contre le backend.
-3. **V1.1** : I1–I6 (dont `cancel_mission`, `approve_result` / `request_changes`), transport Streamable HTTP.
+3. ✅ **V1.1** : I1 (`approve_result`, `request_changes`, 3 révisions au maximum) et I2 (`cancel_mission` avant engagement d'un Payworker), dans la même PR backend.
+4. **V1.2** : I3–I6 (clés hachées avec scopes, plafonds par clé, rate limiting serveur), transport Streamable HTTP.
 
 ## 10. Décisions prises
 
 1. Backend de référence : `Aiworkpay-v2` ; PR backend minimale avant le MCP.
 2. Paiement : **lien Checkout payé par un humain**, seul mode exposé par le MCP.
-3. Annulation (I2) et validation par l'agent (I1) : reportées à la V1.1.
+3. Annulation (I2) et validation par l'agent (I1) : livrées en V1.1. L'agent ne peut annuler qu'avant l'engagement d'un Payworker ; ensuite, seule l'équipe AIWorkPay peut le faire.
 4. Devises : `EUR` par défaut, configurable (`AIWORKPAY_ALLOWED_CURRENCIES`) ; le MAD reste à tester côté Stripe Connect.

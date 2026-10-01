@@ -24,6 +24,9 @@ Architecture et choix détaillés : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 | `list_missions` | Missions de l'agent, filtrables par statut. |
 | `get_mission_status` | Où en est la mission, et quoi faire ensuite (`next_action`). |
 | `get_mission_result` | Compte rendu, données structurées et preuves livrés par le Payworker. |
+| `approve_result` | Accepte le résultat livré : paie le Payworker (90 %). Aperçu puis `confirm`. Irréversible. |
+| `request_changes` | Renvoie le résultat au Payworker avec un commentaire (3 fois au maximum). Aucun mouvement d'argent. |
+| `cancel_mission` | Retire une mission qu'aucun Payworker n'a prise : lien de paiement fermé, ou remboursement. Aperçu puis `confirm`. |
 
 Statuts exposés : `awaiting_payment → open → assigned → in_progress → delivered → completed`, ou `canceled`.
 
@@ -44,13 +47,14 @@ create_mission({
 // 2. Même appel avec "confirm": true → { "mission_id": "…", "status": "awaiting_payment", "payment_url": "https://checkout.stripe.com/…" }
 // 3. Le propriétaire humain paie → la mission est publiée
 // 4. get_mission_status(...) jusqu'à "delivered", puis get_mission_result(...)
+// 5. approve_result(...) (aperçu, puis "confirm": true) ou request_changes(..., "feedback": "…")
 ```
 
 ## Sécurité
 
 - **Aucune dépense sans humain** : une mission n'est publiée qu'après paiement de la page
   Stripe Checkout par une personne. Le serveur n'envoie jamais de moyen de paiement.
-- **Confirmation explicite** : `create_mission` ne fait qu'un aperçu tant que `confirm` n'est pas `true`.
+- **Confirmation explicite** : `create_mission`, `approve_result` et `cancel_mission` ne font qu'un aperçu tant que `confirm` n'est pas `true`.
 - **Plafonds de l'opérateur**, vérifiés avant tout appel : budget maximal par mission,
   devises autorisées, nombre de créations par heure.
 - **Idempotence** : chaque création porte une `Idempotency-Key` dérivée de
@@ -76,7 +80,7 @@ create_mission({
 ## Installation
 
 Prérequis : Node.js 20+ et une instance AIWorkPay incluant l'API agent
-([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1)).
+([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1), commits V1 et V1.1).
 
 ```bash
 npm ci
