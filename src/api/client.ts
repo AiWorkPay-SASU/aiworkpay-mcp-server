@@ -7,6 +7,7 @@ import type {
   CreateMissionResponse,
   Mission,
   MissionStatus,
+  ProofFile,
   RequestChangesResponse,
 } from './types.js';
 
@@ -102,18 +103,56 @@ export class AiworkpayClient {
     return data;
   }
 
+  /**
+   * Download an uploaded proof. The path is built from the ids against the
+   * configured base URL: the attachment's own `url` is never followed, so the
+   * agent's key cannot be sent anywhere else.
+   */
+  async downloadProof(missionId: string, proofId: string, maxBytes: number): Promise<ProofFile> {
+    const { response, requestId } = await this.send(
+      'GET',
+      `/api/missions/${encodeURIComponent(missionId)}/proofs/${encodeURIComponent(proofId)}`,
+      { headers: { Accept: '*/*' } }
+    );
+    const declared = Number(response.headers.get('content-length') ?? 0);
+    if (declared > maxBytes) {
+      await response.body?.cancel();
+      throw new AiworkpayApiError('PROOF_TOO_LARGE', `The file exceeds ${maxBytes} bytes.`, response.status, requestId);
+    }
+    const content = Buffer.from(await response.arrayBuffer());
+    if (content.length > maxBytes) {
+      throw new AiworkpayApiError('PROOF_TOO_LARGE', `The file exceeds ${maxBytes} bytes.`, response.status, requestId);
+    }
+    return { content, contentType: response.headers.get('content-type') ?? 'application/octet-stream' };
+  }
+
   private async request<T>(
     method: 'GET' | 'POST',
     path: string,
     init: { body?: unknown; headers?: Record<string, string> } = {}
   ): Promise<{ data: T; headers: Headers }> {
+    const { response, requestId } = await this.send(method, path, init);
+    const text = await response.text();
+    try {
+      return { data: JSON.parse(text) as T, headers: response.headers };
+    } catch {
+      throw new AiworkpayApiError('INVALID_RESPONSE', 'AIWorkPay returned a non-JSON response.', response.status, requestId);
+    }
+  }
+
+  /** Perform a call; any non-2xx answer becomes an AiworkpayApiError. */
+  private async send(
+    method: 'GET' | 'POST',
+    path: string,
+    init: { body?: unknown; headers?: Record<string, string> } = {}
+  ): Promise<{ response: Response; requestId: string }> {
     const requestId = randomUUID();
     const started = Date.now();
     const headers: Record<string, string> = {
       Accept: 'application/json',
+      ...init.headers,
       Authorization: `Bearer ${this.options.apiKey}`,
       'X-Request-Id': requestId,
-      ...init.headers,
     };
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
 
@@ -137,16 +176,6 @@ export class AiworkpayClient {
       );
     }
 
-    const text = await response.text();
-    let payload: unknown = undefined;
-    if (text) {
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = undefined;
-      }
-    }
-
     log(response.ok ? 'info' : 'warn', 'api.call', {
       method,
       path: redactPath(path),
@@ -156,7 +185,13 @@ export class AiworkpayClient {
     });
 
     if (!response.ok) {
-      const body = (payload ?? {}) as { error?: unknown; code?: unknown; details?: unknown };
+      const text = await response.text();
+      let body: { error?: unknown; code?: unknown; details?: unknown } = {};
+      try {
+        body = (JSON.parse(text) ?? {}) as typeof body;
+      } catch {
+        body = {};
+      }
       const retryAfter = Number(response.headers.get('retry-after'));
       throw new AiworkpayApiError(
         typeof body.code === 'string' ? body.code : (CODES_BY_STATUS[response.status] ?? 'API_ERROR'),
@@ -167,11 +202,7 @@ export class AiworkpayClient {
         Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined
       );
     }
-
-    if (payload === undefined) {
-      throw new AiworkpayApiError('INVALID_RESPONSE', 'AIWorkPay returned a non-JSON response.', response.status, requestId);
-    }
-    return { data: payload as T, headers: response.headers };
+    return { response, requestId };
   }
 }
 

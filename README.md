@@ -23,7 +23,8 @@ Architecture et choix détaillés : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 | `get_mission` | Détail d'une mission. |
 | `list_missions` | Missions de l'agent, filtrables par statut. |
 | `get_mission_status` | Où en est la mission, et quoi faire ensuite (`next_action`). |
-| `get_mission_result` | Compte rendu, données structurées et preuves livrés par le Payworker. |
+| `get_mission_result` | Compte rendu, données structurées et liste des preuves livrés par le Payworker. |
+| `get_proof_file` | Lit un fichier de preuve envoyé par le Payworker : les photos reviennent comme **images** que l'agent peut regarder, les PDF comme documents intégrés (15 Mo au maximum). |
 | `approve_result` | Accepte le résultat livré : paie le Payworker (90 %). Aperçu puis `confirm`. Irréversible. |
 | `request_changes` | Renvoie le résultat au Payworker avec un commentaire (3 fois au maximum). Aucun mouvement d'argent. |
 | `cancel_mission` | Retire une mission qu'aucun Payworker n'a prise : lien de paiement fermé, ou remboursement. Aperçu puis `confirm`. |
@@ -63,8 +64,11 @@ create_mission({
   Côté AIWorkPay, chaque clé a ses **permissions** (`missions:read`, `missions:write`,
   `missions:approve`), ses **plafonds** (par mission, par mois) et son **débit** limité.
   Les refus remontent à l'agent avec un code stable et une indication (`hint`) sur quoi faire.
-- **Résultats non fiables par nature** : le contenu livré par un humain est signalé comme
-  donnée à vérifier, jamais comme instruction (protection contre l'injection de prompt).
+- **Résultats non fiables par nature** : le contenu livré par un humain (texte, photos, PDF)
+  est signalé comme donnée à vérifier, jamais comme instruction (protection contre
+  l'injection de prompt).
+- **La clé ne suit jamais une URL de la mission** : `get_proof_file` reconstruit le chemin
+  de téléchargement à partir des identifiants, sur l'URL AIWorkPay configurée.
 - **Journalisation** : JSON sur stderr (stdout est réservé au protocole), avec
   `X-Request-Id` par appel ; la clé et le contenu des missions ne sont jamais journalisés.
 
@@ -83,7 +87,7 @@ create_mission({
 ## Installation
 
 Prérequis : Node.js 20+ et une instance AIWorkPay incluant l'API agent
-([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1), commits V1, V1.1 et V1.2).
+([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) : V1, V1.1, V1.2 et fichiers de preuve).
 
 ```bash
 npm ci

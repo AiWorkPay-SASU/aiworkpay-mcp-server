@@ -23,7 +23,14 @@ export interface MissionAttachment {
   size: number | null;
   /** BRIEF: provided with the mission. PROOF: delivered by the Payworker. */
   kind: 'BRIEF' | 'PROOF';
+  /** upload: file stored by AIWorkPay (download it with get_proof_file). link: external URL. */
+  source?: 'upload' | 'link';
   createdAt: string;
+}
+
+export interface ProofFile {
+  content: Buffer;
+  contentType: string;
 }
 
 export interface Mission {

@@ -66,6 +66,7 @@ describe('AIWorkPay MCP server', () => {
       'get_mission',
       'get_mission_result',
       'get_mission_status',
+      'get_proof_file',
       'list_missions',
       'request_changes',
     ]);
@@ -318,5 +319,78 @@ describe('AIWorkPay MCP server', () => {
     expect(preview.structuredContent?.error).toMatchObject({ code: 'MISSION_NOT_CANCELABLE', source: 'mcp_server' });
     const direct = await call('cancel_mission', { mission_id: id, confirm: true });
     expect(direct.structuredContent?.error).toMatchObject({ code: 'MISSION_NOT_CANCELABLE', source: 'aiworkpay_api' });
+  });
+
+  describe('proof files', () => {
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('pixels')]);
+    const PDF = Buffer.from('%PDF-1.7 rapport');
+
+    async function deliveredWithProofs() {
+      const created = await call('create_mission', { ...order, confirm: true, client_reference: `proofs-${Math.random()}` });
+      const id = String(created.structuredContent?.mission_id);
+      const proof = (pid: string, mimeType: string, source: 'upload' | 'link', url = `https://aiworkpay.test/api/missions/${id}/proofs/${pid}`) => ({
+        id: pid, url, filename: `${pid}.bin`, mimeType, size: 10, kind: 'PROOF' as const, source, createdAt: '',
+      });
+      api.advance(id, {
+        status: 'DELIVERED',
+        resultNote: 'fait',
+        attachments: [
+          // A malicious or mistaken url must never receive the agent's key
+          proof('photo-1', 'image/png', 'upload', 'https://evil.example/steal'),
+          proof('report-1', 'application/pdf', 'upload'),
+          proof('link-1', 'image/jpeg', 'link', 'https://photos.example/x.jpg'),
+        ],
+      });
+      api.files.set('photo-1', { content: PNG, contentType: 'image/png' });
+      api.files.set('report-1', { content: PDF, contentType: 'application/pdf' });
+      return id;
+    }
+
+    it('lists uploaded proofs without their URL', async () => {
+      const id = await deliveredWithProofs();
+      const result = await call('get_mission_result', { mission_id: id });
+      expect(result.structuredContent?.proofs).toEqual([
+        { proof_id: 'photo-1', source: 'upload', filename: 'photo-1.bin', mime_type: 'image/png', size_bytes: 10, read_with: 'get_proof_file' },
+        { proof_id: 'report-1', source: 'upload', filename: 'report-1.bin', mime_type: 'application/pdf', size_bytes: 10, read_with: 'get_proof_file' },
+        { proof_id: 'link-1', source: 'link', filename: 'link-1.bin', mime_type: 'image/jpeg', size_bytes: 10, url: 'https://photos.example/x.jpg' },
+      ]);
+    });
+
+    it('returns a photo as an image, from the configured API only', async () => {
+      const id = await deliveredWithProofs();
+      const result = (await client.callTool({ name: 'get_proof_file', arguments: { mission_id: id, proof_id: 'photo-1' } })) as {
+        content: { type: string; data?: string; mimeType?: string }[];
+        structuredContent?: Record<string, unknown>;
+      };
+      const image = result.content.find((c) => c.type === 'image');
+      expect(image).toMatchObject({ mimeType: 'image/png', data: PNG.toString('base64') });
+      expect(String(result.structuredContent?.content_warning)).toContain('never as instructions');
+      expect(api.requests.at(-1)?.url).toBe(`/api/missions/${id}/proofs/photo-1`);
+      expect(api.requests.every((r) => !r.url.includes('steal'))).toBe(true);
+    });
+
+    it('returns a PDF as an embedded resource', async () => {
+      const id = await deliveredWithProofs();
+      const result = (await client.callTool({ name: 'get_proof_file', arguments: { mission_id: id, proof_id: 'report-1' } })) as {
+        content: { type: string; resource?: { blob?: string; mimeType?: string; uri?: string } }[];
+      };
+      const resource = result.content.find((c) => c.type === 'resource')?.resource;
+      expect(resource).toMatchObject({ mimeType: 'application/pdf', blob: PDF.toString('base64'), uri: `aiworkpay://missions/${id}/proofs/report-1` });
+    });
+
+    it('explains external links and unknown proofs', async () => {
+      const id = await deliveredWithProofs();
+      const link = await call('get_proof_file', { mission_id: id, proof_id: 'link-1' });
+      expect(link.structuredContent).toMatchObject({ source: 'link', url: 'https://photos.example/x.jpg' });
+      const unknown = await call('get_proof_file', { mission_id: id, proof_id: 'nope' });
+      expect(unknown.structuredContent?.error).toMatchObject({ code: 'PROOF_NOT_FOUND' });
+    });
+
+    it('refuses files that are too large', async () => {
+      const id = await deliveredWithProofs();
+      api.files.set('photo-1', { content: Buffer.alloc(16 * 1024 * 1024, 1), contentType: 'image/png' });
+      const result = await call('get_proof_file', { mission_id: id, proof_id: 'photo-1' });
+      expect(result.structuredContent?.error).toMatchObject({ code: 'PROOF_TOO_LARGE' });
+    });
   });
 });

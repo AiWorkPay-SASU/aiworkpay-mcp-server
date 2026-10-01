@@ -1,6 +1,6 @@
 # AIWorkPay MCP Server — Analyse de l'existant et architecture V1
 
-> Statut : **V1, V1.1 et V1.2 implémentées** (V1.1 : I1, I2 ; V1.2 : I3–I6 et transport HTTP). Backend : [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) (B1–B4). MCP : ce dépôt.
+> Statut : **V1, V1.1, V1.2 et fichiers de preuve implémentés** (V1.1 : I1, I2 ; V1.2 : I3–I6 et transport HTTP). Backend : [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) (B1–B4). MCP : ce dépôt.
 > Les écarts entre la proposition initiale et l'implémentation sont signalés par **[V1]**.
 > Backend de référence : **`cortexAI-2025/Aiworkpay-v2`** @ `eb90e1b` (2026-09-24).
 
@@ -278,6 +278,7 @@ et `executor_type`. Il servira de référence pour I3 à I6, pas de dépendance.
 2. ✅ **MCP V1** dans ce dépôt : 5 tools, garde-fous, tests unitaires et d'intégration, test de bout en bout en stdio contre le backend.
 3. ✅ **V1.1** : I1 (`approve_result`, `request_changes`, 3 révisions au maximum) et I2 (`cancel_mission` avant engagement d'un Payworker), dans la même PR backend.
 4. ✅ **V1.2** : I3 (clés hachées, scopes `missions:read|write|approve`, expiration, dernière utilisation), I4 (plafond par mission et budget mensuel par clé, vérifiés atomiquement), I5 (limites de débit en base : requêtes et créations par clé, échecs d'authentification par IP), I6 (codes stables + `hint` côté MCP), transport Streamable HTTP sans état (clé par requête, contrôle `Host`/`Origin`, limite de créations par agent).
+5. ✅ **Fichiers de preuve** : envoi par le Payworker (JPEG, PNG, WebP, HEIC, PDF, type vérifié sur le contenu, 10 Mo, 20 par mission), stockage privé S3-compatible ou local, téléchargement contrôlé (agent propriétaire après livraison, Payworker assigné, admin) ; tool MCP `get_proof_file` (photos rendues comme images, PDF comme ressources).
 
 ## 10. Décisions prises
 

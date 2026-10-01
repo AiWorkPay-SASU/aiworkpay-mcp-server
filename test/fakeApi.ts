@@ -8,6 +8,8 @@ export class FakeAiworkpayApi {
   readonly missions = new Map<string, Mission & { apiKey: string; idem?: string; fp?: string }>();
   readonly requests: { method: string; url: string; headers: Record<string, string>; body?: unknown }[] = [];
   private seq = 0;
+  /** Uploaded proof contents, by attachment id. */
+  readonly files = new Map<string, { content: Buffer; contentType: string }>();
   /** Next response to force, e.g. a 502, consumed once. */
   failNext?: { status: number; body: unknown; headers?: Record<string, string> };
 
@@ -30,6 +32,19 @@ export class FakeAiworkpayApi {
     if (!this.keys.includes(key)) return json(403, { error: 'Clé API invalide', code: 'INVALID_API_KEY' });
 
     const method = init.method ?? 'GET';
+
+    const proof = url.pathname.match(/^\/api\/missions\/([^/]+)\/proofs\/([^/]+)$/);
+    if (proof && method === 'GET') {
+      const mission = this.missions.get(decodeURIComponent(proof[1]!));
+      const file = this.files.get(decodeURIComponent(proof[2]!));
+      if (!mission || mission.apiKey !== key || !file || !['DELIVERED', 'COMPLETED'].includes(mission.status)) {
+        return json(404, { error: 'Fichier introuvable', code: 'PROOF_NOT_FOUND' });
+      }
+      return new Response(new Uint8Array(file.content), {
+        status: 200,
+        headers: { 'content-type': file.contentType, 'content-length': String(file.content.length) },
+      });
+    }
 
     const action = url.pathname.match(/^\/api\/missions\/([^/]+)\/(cancel|approve|request-changes)$/);
     if (action && method === 'POST') return this.act(key, decodeURIComponent(action[1]!), action[2]!, body);
