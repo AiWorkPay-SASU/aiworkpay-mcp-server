@@ -98,7 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
 export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): HttpConfig {
   const shared = serverConfig(env);
-  const h = parse(httpSchema, env);
+  const h = parse(httpSchema, { ...env, MCP_HTTP_PORT: env.MCP_HTTP_PORT ?? env.PORT });
   return {
     ...shared,
     host: h.MCP_HTTP_HOST,
@@ -107,3 +107,4 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): HttpConfig
     allowedOrigins: h.MCP_ALLOWED_ORIGINS,
   };
 }
+

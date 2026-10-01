@@ -57,6 +57,14 @@ describe('AIWorkPay MCP server', () => {
   beforeEach(async () => start());
   afterEach(async () => client.close());
 
+  it('allows only one distinct creation under a concurrent burst', async () => {
+    await client.close();
+    await start(baseConfig({ maxCreationsPerHour: 1 }));
+    const results = await Promise.all(Array.from({ length: 5 }, (_, i) => call('create_mission', { ...order, confirm: true, client_reference: `burst-${i}` })));
+    expect(results.filter((r) => !r.isError)).toHaveLength(1);
+    expect(api.missions.size).toBe(1);
+  });
+
   it('lists the tools with their annotations', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -396,3 +404,4 @@ describe('AIWorkPay MCP server', () => {
     });
   });
 });
+

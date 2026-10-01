@@ -107,7 +107,7 @@ export function registerCreateMission(
         }
 
         const idempotencyKey = idempotencyKeyFor(args, request);
-        const retryAfter = limiter.retryAfterSeconds(idempotencyKey);
+        const retryAfter = limiter.reserve(idempotencyKey);
         if (retryAfter > 0) {
           throw new GuardError(
             'CREATION_LIMIT_REACHED',
@@ -116,8 +116,13 @@ export function registerCreateMission(
           );
         }
 
-        const created = await client.createMission(request, idempotencyKey);
-        if (!created.replayed) limiter.record(idempotencyKey);
+        let created;
+        try {
+          created = await client.createMission(request, idempotencyKey);
+        } finally {
+          // An uncertain outcome still consumes a slot; the same reference can retry.
+          limiter.record(idempotencyKey);
+        }
 
         const view = missionView(created.mission);
         log('info', 'mission.created', { mission_id: view.mission_id, replayed: created.replayed, status: view.status });
@@ -134,3 +139,4 @@ export function registerCreateMission(
       })
   );
 }
+

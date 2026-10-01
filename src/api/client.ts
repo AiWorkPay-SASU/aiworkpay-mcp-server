@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { missionSchema, createSchema, cancelSchema, approveSchema, changesSchema } from './schemas.js';
 import { randomUUID } from 'node:crypto';
 import { log } from '../log.js';
 import type {
@@ -65,22 +67,23 @@ export class AiworkpayClient {
     const { data, headers } = await this.request<CreateMissionResponse>('POST', '/api/missions', {
       body,
       headers: { 'Idempotency-Key': idempotencyKey },
+      schema: createSchema,
     });
     return { ...data, replayed: headers.get('idempotent-replayed') === 'true' };
   }
 
   async getMission(id: string): Promise<Mission> {
-    const { data } = await this.request<Mission>('GET', `/api/missions/${encodeURIComponent(id)}`);
+    const { data } = await this.request<Mission>('GET', `/api/missions/${encodeURIComponent(id)}`, { schema: missionSchema });
     return data;
   }
 
   async cancelMission(id: string): Promise<CancelMissionResponse> {
-    const { data } = await this.request<CancelMissionResponse>('POST', `/api/missions/${encodeURIComponent(id)}/cancel`);
+    const { data } = await this.request<CancelMissionResponse>('POST', `/api/missions/${encodeURIComponent(id)}/cancel`, { schema: cancelSchema });
     return data;
   }
 
   async approveMission(id: string): Promise<ApproveMissionResponse> {
-    const { data } = await this.request<ApproveMissionResponse>('POST', `/api/missions/${encodeURIComponent(id)}/approve`);
+    const { data } = await this.request<ApproveMissionResponse>('POST', `/api/missions/${encodeURIComponent(id)}/approve`, { schema: approveSchema });
     return data;
   }
 
@@ -88,7 +91,7 @@ export class AiworkpayClient {
     const { data } = await this.request<RequestChangesResponse>(
       'POST',
       `/api/missions/${encodeURIComponent(id)}/request-changes`,
-      { body: { feedback } }
+      { body: { feedback }, schema: changesSchema }
     );
     return data;
   }
@@ -99,7 +102,7 @@ export class AiworkpayClient {
     if (params.limit !== undefined) query.set('limit', String(params.limit));
     if (params.skip !== undefined) query.set('skip', String(params.skip));
     const suffix = query.size > 0 ? `?${query}` : '';
-    const { data } = await this.request<Mission[]>('GET', `/api/missions${suffix}`);
+    const { data } = await this.request<Mission[]>('GET', `/api/missions${suffix}`, { schema: z.array(missionSchema) });
     return data;
   }
 
@@ -119,7 +122,24 @@ export class AiworkpayClient {
       await response.body?.cancel();
       throw new AiworkpayApiError('PROOF_TOO_LARGE', `The file exceeds ${maxBytes} bytes.`, response.status, requestId);
     }
-    const content = Buffer.from(await response.arrayBuffer());
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    const reader = response.body?.getReader();
+    if (reader) {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) {
+            await reader.cancel();
+            throw new AiworkpayApiError('PROOF_TOO_LARGE', `The file exceeds ${maxBytes} bytes.`, response.status, requestId);
+          }
+          chunks.push(value);
+        }
+      } finally { reader.releaseLock(); }
+    }
+    const content = Buffer.concat(chunks);
     if (content.length > maxBytes) {
       throw new AiworkpayApiError('PROOF_TOO_LARGE', `The file exceeds ${maxBytes} bytes.`, response.status, requestId);
     }
@@ -129,14 +149,16 @@ export class AiworkpayClient {
   private async request<T>(
     method: 'GET' | 'POST',
     path: string,
-    init: { body?: unknown; headers?: Record<string, string> } = {}
+    init: { body?: unknown; headers?: Record<string, string>; schema?: z.ZodTypeAny } = {}
   ): Promise<{ data: T; headers: Headers }> {
     const { response, requestId } = await this.send(method, path, init);
     const text = await response.text();
     try {
-      return { data: JSON.parse(text) as T, headers: response.headers };
+      const payload: unknown = JSON.parse(text);
+      const data = init.schema ? init.schema.parse(payload) : payload;
+      return { data: data as T, headers: response.headers };
     } catch {
-      throw new AiworkpayApiError('INVALID_RESPONSE', 'AIWorkPay returned a non-JSON response.', response.status, requestId);
+      throw new AiworkpayApiError('INVALID_RESPONSE', 'AIWorkPay returned an invalid response.', response.status, requestId);
     }
   }
 
@@ -210,3 +232,4 @@ export class AiworkpayClient {
 function redactPath(path: string): string {
   return path.split('?')[0] ?? path;
 }
+
