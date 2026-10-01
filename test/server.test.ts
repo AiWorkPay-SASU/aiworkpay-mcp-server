@@ -330,6 +330,7 @@ describe('AIWorkPay MCP server', () => {
       const id = String(created.structuredContent?.mission_id);
       const proof = (pid: string, mimeType: string, source: 'upload' | 'link', url = `https://aiworkpay.test/api/missions/${id}/proofs/${pid}`) => ({
         id: pid, url, filename: `${pid}.bin`, mimeType, size: 10, kind: 'PROOF' as const, source, createdAt: '',
+        scanStatus: source === 'upload' ? (pid === 'report-1' ? ('NOT_SCANNED' as const) : ('CLEAN' as const)) : null,
       });
       api.advance(id, {
         status: 'DELIVERED',
@@ -350,9 +351,9 @@ describe('AIWorkPay MCP server', () => {
       const id = await deliveredWithProofs();
       const result = await call('get_mission_result', { mission_id: id });
       expect(result.structuredContent?.proofs).toEqual([
-        { proof_id: 'photo-1', source: 'upload', filename: 'photo-1.bin', mime_type: 'image/png', size_bytes: 10, read_with: 'get_proof_file' },
-        { proof_id: 'report-1', source: 'upload', filename: 'report-1.bin', mime_type: 'application/pdf', size_bytes: 10, read_with: 'get_proof_file' },
-        { proof_id: 'link-1', source: 'link', filename: 'link-1.bin', mime_type: 'image/jpeg', size_bytes: 10, url: 'https://photos.example/x.jpg' },
+        { proof_id: 'photo-1', source: 'upload', filename: 'photo-1.bin', mime_type: 'image/png', size_bytes: 10, read_with: 'get_proof_file', virus_scan: 'clean' },
+        { proof_id: 'report-1', source: 'upload', filename: 'report-1.bin', mime_type: 'application/pdf', size_bytes: 10, read_with: 'get_proof_file', virus_scan: 'not_scanned' },
+        { proof_id: 'link-1', source: 'link', filename: 'link-1.bin', mime_type: 'image/jpeg', size_bytes: 10, url: 'https://photos.example/x.jpg', virus_scan: 'not_applicable' },
       ]);
     });
 
@@ -375,6 +376,7 @@ describe('AIWorkPay MCP server', () => {
         content: { type: string; resource?: { blob?: string; mimeType?: string; uri?: string } }[];
       };
       const resource = result.content.find((c) => c.type === 'resource')?.resource;
+      expect(JSON.stringify(result.content[0])).toContain('NOT scanned');
       expect(resource).toMatchObject({ mimeType: 'application/pdf', blob: PDF.toString('base64'), uri: `aiworkpay://missions/${id}/proofs/report-1` });
     });
 

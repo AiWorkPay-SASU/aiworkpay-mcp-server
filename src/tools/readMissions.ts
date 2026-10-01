@@ -32,7 +32,9 @@ function proofView(a: MissionAttachment) {
     mime_type: a.mimeType,
     size_bytes: a.size,
     // An uploaded file needs the agent's key: it is fetched through get_proof_file, never by URL.
-    ...(uploaded ? { read_with: 'get_proof_file' } : { url: a.url }),
+    ...(uploaded
+      ? { read_with: 'get_proof_file', virus_scan: a.scanStatus === 'CLEAN' ? 'clean' : 'not_scanned' }
+      : { url: a.url, virus_scan: 'not_applicable' }),
   };
 }
 
@@ -74,7 +76,10 @@ export function registerReadTools(server: McpServer, deps: { client: AiworkpayCl
         const summary = {
           ...proofView(proof),
           size_bytes: file.content.length,
-          content_warning: UNTRUSTED_NOTICE,
+          content_warning:
+            proof.scanStatus === 'CLEAN'
+              ? UNTRUSTED_NOTICE
+              : `${UNTRUSTED_NOTICE} This file was NOT scanned by an antivirus: do not open it outside this conversation.`,
         };
         const data = file.content.toString('base64');
         const body: CallToolResult['content'][number] = VIEWABLE_IMAGES.has(mimeType)

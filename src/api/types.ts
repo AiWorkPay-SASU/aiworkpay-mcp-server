@@ -25,6 +25,8 @@ export interface MissionAttachment {
   kind: 'BRIEF' | 'PROOF';
   /** upload: file stored by AIWorkPay (download it with get_proof_file). link: external URL. */
   source?: 'upload' | 'link';
+  /** Antivirus result of an uploaded file: CLEAN, or NOT_SCANNED when scanning was off. */
+  scanStatus?: 'CLEAN' | 'NOT_SCANNED' | null;
   createdAt: string;
 }
 

@@ -278,7 +278,7 @@ et `executor_type`. Il servira de référence pour I3 à I6, pas de dépendance.
 2. ✅ **MCP V1** dans ce dépôt : 5 tools, garde-fous, tests unitaires et d'intégration, test de bout en bout en stdio contre le backend.
 3. ✅ **V1.1** : I1 (`approve_result`, `request_changes`, 3 révisions au maximum) et I2 (`cancel_mission` avant engagement d'un Payworker), dans la même PR backend.
 4. ✅ **V1.2** : I3 (clés hachées, scopes `missions:read|write|approve`, expiration, dernière utilisation), I4 (plafond par mission et budget mensuel par clé, vérifiés atomiquement), I5 (limites de débit en base : requêtes et créations par clé, échecs d'authentification par IP), I6 (codes stables + `hint` côté MCP), transport Streamable HTTP sans état (clé par requête, contrôle `Host`/`Origin`, limite de créations par agent).
-5. ✅ **Fichiers de preuve** : envoi par le Payworker (JPEG, PNG, WebP, HEIC, PDF, type vérifié sur le contenu, 10 Mo, 20 par mission), stockage privé S3-compatible ou local, téléchargement contrôlé (agent propriétaire après livraison, Payworker assigné, admin) ; tool MCP `get_proof_file` (photos rendues comme images, PDF comme ressources).
+5. ✅ **Fichiers de preuve** : envoi par le Payworker (JPEG, PNG, WebP, HEIC, PDF, type vérifié sur le contenu, 10 Mo, 20 par mission), analyse antivirus ClamAV obligatoire avant stockage (refus si menace ou antivirus indisponible), stockage privé S3-compatible ou local, téléchargement contrôlé (agent propriétaire après livraison, Payworker assigné, admin) ; tool MCP `get_proof_file` (photos rendues comme images, PDF comme ressources).
 
 ## 10. Décisions prises
 

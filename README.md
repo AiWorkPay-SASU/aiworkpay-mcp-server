@@ -24,7 +24,7 @@ Architecture et choix détaillés : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 | `list_missions` | Missions de l'agent, filtrables par statut. |
 | `get_mission_status` | Où en est la mission, et quoi faire ensuite (`next_action`). |
 | `get_mission_result` | Compte rendu, données structurées et liste des preuves livrés par le Payworker. |
-| `get_proof_file` | Lit un fichier de preuve envoyé par le Payworker : les photos reviennent comme **images** que l'agent peut regarder, les PDF comme documents intégrés (15 Mo au maximum). |
+| `get_proof_file` | Lit un fichier de preuve envoyé par le Payworker : les photos reviennent comme **images** que l'agent peut regarder, les PDF comme documents intégrés (15 Mo au maximum). Chaque preuve indique son analyse antivirus (`virus_scan: clean`, ou `not_scanned` avec un avertissement si l'analyse était désactivée côté AIWorkPay). |
 | `approve_result` | Accepte le résultat livré : paie le Payworker (90 %). Aperçu puis `confirm`. Irréversible. |
 | `request_changes` | Renvoie le résultat au Payworker avec un commentaire (3 fois au maximum). Aucun mouvement d'argent. |
 | `cancel_mission` | Retire une mission qu'aucun Payworker n'a prise : lien de paiement fermé, ou remboursement. Aperçu puis `confirm`. |
