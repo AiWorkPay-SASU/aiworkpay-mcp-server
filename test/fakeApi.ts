@@ -9,7 +9,7 @@ export class FakeAiworkpayApi {
   readonly requests: { method: string; url: string; headers: Record<string, string>; body?: unknown }[] = [];
   private seq = 0;
   /** Next response to force, e.g. a 502, consumed once. */
-  failNext?: { status: number; body: unknown };
+  failNext?: { status: number; body: unknown; headers?: Record<string, string> };
 
   constructor(private readonly keys = ['awp_test']) {}
 
@@ -20,9 +20,9 @@ export class FakeAiworkpayApi {
     this.requests.push({ method: init.method ?? 'GET', url: url.pathname + url.search, headers, body });
 
     if (this.failNext) {
-      const { status, body: failBody } = this.failNext;
+      const { status, body: failBody, headers: failHeaders } = this.failNext;
       this.failNext = undefined;
-      return json(status, failBody);
+      return json(status, failBody, failHeaders);
     }
 
     const key = headers.authorization?.replace(/^Bearer /, '');

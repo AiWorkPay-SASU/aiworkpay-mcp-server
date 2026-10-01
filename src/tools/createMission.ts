@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AiworkpayClient } from '../api/client.js';
-import type { Config } from '../config.js';
+import type { ServerConfig } from '../config.js';
 import { idempotencyKeyFor, MISSION_TYPES, toCreateRequest } from '../domain/missionInput.js';
 import { missionView } from '../domain/missionStatus.js';
 import { log } from '../log.js';
@@ -57,7 +57,7 @@ const inputSchema = {
 
 export function registerCreateMission(
   server: McpServer,
-  deps: { client: AiworkpayClient; config: Config; limiter: CreationLimiter }
+  deps: { client: AiworkpayClient; config: ServerConfig; limiter: CreationLimiter }
 ): void {
   const { client, config, limiter } = deps;
 

@@ -1,4 +1,4 @@
-import type { Config } from '../config.js';
+import type { ServerConfig } from '../config.js';
 import type { MissionInput } from '../domain/missionInput.js';
 
 /** A request refused by this server before anything is sent to AIWorkPay. */
@@ -19,7 +19,7 @@ export class GuardError extends Error {
  */
 export function assertSpendAllowed(
   input: Pick<MissionInput, 'budget' | 'currency' | 'deadline'>,
-  config: Pick<Config, 'maxMissionBudget' | 'allowedCurrencies'>,
+  config: Pick<ServerConfig, 'maxMissionBudget' | 'allowedCurrencies'>,
   now = new Date()
 ): void {
   const currency = input.currency.toUpperCase();

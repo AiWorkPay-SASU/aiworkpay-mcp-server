@@ -1,12 +1,13 @@
 {
   "name": "aiworkpay-mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server letting AI agents delegate real-world missions to the AIWorkPay workforce",
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
   "bin": {
-    "aiworkpay-mcp-server": "dist/index.js"
+    "aiworkpay-mcp-server": "dist/index.js",
+    "aiworkpay-mcp-http": "dist/httpMain.js"
   },
   "files": [
     "dist"
@@ -19,7 +20,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "start:http": "node dist/httpMain.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",

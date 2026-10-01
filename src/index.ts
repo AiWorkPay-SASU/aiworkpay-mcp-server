@@ -16,7 +16,7 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  const server = createServer({ config });
+  const server = createServer({ config, apiKey: config.apiKey });
   await server.connect(new StdioServerTransport());
   log('info', 'server.started', {
     version: SERVER_VERSION,

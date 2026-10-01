@@ -24,7 +24,9 @@ export class AiworkpayApiError extends Error {
     /** HTTP status, 0 when no response was received. */
     readonly status: number,
     readonly requestId: string,
-    readonly details?: unknown
+    readonly details?: unknown,
+    /** From the Retry-After header of a 429. */
+    readonly retryAfterSeconds?: number
   ) {
     super(message);
     this.name = 'AiworkpayApiError';
@@ -155,12 +157,14 @@ export class AiworkpayClient {
 
     if (!response.ok) {
       const body = (payload ?? {}) as { error?: unknown; code?: unknown; details?: unknown };
+      const retryAfter = Number(response.headers.get('retry-after'));
       throw new AiworkpayApiError(
         typeof body.code === 'string' ? body.code : (CODES_BY_STATUS[response.status] ?? 'API_ERROR'),
         typeof body.error === 'string' ? body.error : `AIWorkPay answered HTTP ${response.status}.`,
         response.status,
         requestId,
-        body.details
+        body.details,
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined
       );
     }
 

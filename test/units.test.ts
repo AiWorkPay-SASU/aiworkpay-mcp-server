@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AiworkpayApiError, AiworkpayClient } from '../src/api/client.js';
-import { ConfigError, loadConfig } from '../src/config.js';
+import { ConfigError, loadConfig, loadHttpConfig } from '../src/config.js';
+import { hostAllowed } from '../src/http.js';
 import { idempotencyKeyFor, renderDescription, toCreateRequest, type MissionInput } from '../src/domain/missionInput.js';
 import { missionView, toAgentStatus } from '../src/domain/missionStatus.js';
 import { CreationLimiter } from '../src/safety/creationLimiter.js';
@@ -47,6 +48,26 @@ describe('config', () => {
     expect(loadConfig({ ...base, AIWORKPAY_BASE_URL: 'http://localhost:3000' }).baseUrl).toBe('http://localhost:3000');
     expect(() => loadConfig({ ...base, AIWORKPAY_API_KEY: 'sk_live_x' })).toThrow(/awp_/);
     expect(() => loadConfig({})).toThrow(ConfigError);
+  });
+});
+
+describe('http config', () => {
+  it('needs no API key and defaults to localhost', () => {
+    const c = loadHttpConfig({ AIWORKPAY_BASE_URL: 'https://aiworkpay.fr' });
+    expect(c).toMatchObject({ host: '127.0.0.1', port: 3333, allowedHosts: ['localhost', '127.0.0.1'], allowedOrigins: [] });
+    expect(c).not.toHaveProperty('apiKey');
+    expect(loadHttpConfig({ AIWORKPAY_BASE_URL: 'https://x.fr', MCP_ALLOWED_HOSTS: 'MCP.AIWorkPay.fr, localhost' }).allowedHosts).toEqual([
+      'mcp.aiworkpay.fr',
+      'localhost',
+    ]);
+  });
+
+  it('checks the Host header without its port', () => {
+    expect(hostAllowed('localhost:3333', ['localhost'])).toBe(true);
+    expect(hostAllowed('LOCALHOST', ['localhost'])).toBe(true);
+    expect(hostAllowed('[::1]:3333', ['[::1]'])).toBe(true);
+    expect(hostAllowed('evil.example:3333', ['localhost'])).toBe(false);
+    expect(hostAllowed(undefined, ['localhost'])).toBe(false);
   });
 });
 

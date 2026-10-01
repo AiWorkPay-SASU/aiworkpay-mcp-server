@@ -6,7 +6,7 @@ téléphonique, collecte d'informations locales, contrôle de documents. L'agent
 mission, suit son exécution et récupère un résultat structuré, puis poursuit son workflow.
 
 ```
-Agent IA ──MCP (stdio)──► aiworkpay-mcp-server ──HTTPS + clé agent──► AIWorkPay (Aiworkpay-v2)
+Agent IA ──MCP (stdio ou HTTP)──► aiworkpay-mcp-server ──HTTPS + clé agent──► AIWorkPay (Aiworkpay-v2)
                                                                         │
                                                     Payworker humain ◄──┘ → résultat + preuves
 ```
@@ -60,6 +60,9 @@ create_mission({
 - **Idempotence** : chaque création porte une `Idempotency-Key` dérivée de
   `client_reference` (ou du contenu). Un réessai ou une boucle ne crée jamais de doublon.
 - **Une identité par agent** : chaque agent utilise sa propre clé `awp_…` et ne voit que ses missions.
+  Côté AIWorkPay, chaque clé a ses **permissions** (`missions:read`, `missions:write`,
+  `missions:approve`), ses **plafonds** (par mission, par mois) et son **débit** limité.
+  Les refus remontent à l'agent avec un code stable et une indication (`hint`) sur quoi faire.
 - **Résultats non fiables par nature** : le contenu livré par un humain est signalé comme
   donnée à vérifier, jamais comme instruction (protection contre l'injection de prompt).
 - **Journalisation** : JSON sur stderr (stdout est réservé au protocole), avec
@@ -80,7 +83,7 @@ create_mission({
 ## Installation
 
 Prérequis : Node.js 20+ et une instance AIWorkPay incluant l'API agent
-([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1), commits V1 et V1.1).
+([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1), commits V1, V1.1 et V1.2).
 
 ```bash
 npm ci
@@ -105,6 +108,45 @@ npm run build
 ```
 
 Avec Claude Code : `claude mcp add aiworkpay -e AIWORKPAY_BASE_URL=https://aiworkpay.fr -e AIWORKPAY_API_KEY=awp_… -- node /chemin/vers/dist/index.js`
+
+## Transport HTTP (agents distants)
+
+Pour des agents qui ne tournent pas sur la même machine, le serveur expose le transport
+MCP **Streamable HTTP** (sans état) : `POST /mcp`. Chaque requête porte la clé de son
+agent, `Authorization: Bearer awp_…` ; le serveur n'en stocke aucune et la transmet
+telle quelle à AIWorkPay, qui applique permissions et plafonds.
+
+```bash
+AIWORKPAY_BASE_URL=https://aiworkpay.fr \
+MCP_HTTP_HOST=127.0.0.1 MCP_HTTP_PORT=3333 \
+MCP_ALLOWED_HOSTS=mcp.aiworkpay.fr \
+npm run start:http
+```
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `MCP_HTTP_HOST` | `127.0.0.1` | Adresse d'écoute. |
+| `MCP_HTTP_PORT` | `3333` | Port d'écoute. |
+| `MCP_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Valeurs acceptées de l'en-tête `Host` (protection contre le DNS rebinding). |
+| `MCP_ALLOWED_ORIGINS` | *(vide)* | Origines navigateur acceptées ; une requête avec un autre `Origin` est refusée. |
+
+Les variables `AIWORKPAY_*` (hors clé) s'appliquent aussi ; la limite de créations par
+heure est comptée **par agent**. Déployez derrière un reverse proxy qui termine le
+**TLS** : la clé ne doit jamais circuler en clair. `GET /healthz` sert de sonde.
+
+Client MCP distant, par exemple :
+
+```json
+{
+  "mcpServers": {
+    "aiworkpay": {
+      "type": "http",
+      "url": "https://mcp.aiworkpay.fr/mcp",
+      "headers": { "Authorization": "Bearer awp_…" }
+    }
+  }
+}
+```
 
 ## Développement
 

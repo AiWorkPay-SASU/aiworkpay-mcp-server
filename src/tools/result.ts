@@ -19,6 +19,15 @@ function failure(error: Record<string, unknown>): CallToolResult {
   };
 }
 
+/** What the agent can do about errors it cannot fix by itself. */
+const HINTS: Record<string, string> = {
+  INSUFFICIENT_SCOPE: 'Your API key does not allow this action. Ask your human owner for a key with the required scope.',
+  INVALID_API_KEY: 'The API key is invalid, expired or revoked. Ask your human owner for a new key.',
+  BUDGET_LIMIT_EXCEEDED: 'The budget exceeds the per-mission cap of your API key. Lower it or ask your owner to raise the cap.',
+  MONTHLY_BUDGET_EXCEEDED: 'The monthly budget of your API key is used up. Wait for next month or ask your owner to raise it.',
+  RATE_LIMITED: 'Too many requests. Wait retry_after_seconds before trying again.',
+};
+
 const RETRYABLE = new Set(['TIMEOUT', 'NETWORK_ERROR', 'PAYMENT_PROVIDER_UNAVAILABLE', 'RATE_LIMITED', 'INTERNAL_ERROR']);
 
 /** Run a tool body and turn known failures into tool errors the agent can act on. */
@@ -39,6 +48,8 @@ export async function runTool(tool: string, body: () => Promise<CallToolResult>)
         http_status: error.status || undefined,
         request_id: error.requestId,
         retryable: RETRYABLE.has(error.code) || error.status >= 500,
+        retry_after_seconds: error.retryAfterSeconds,
+        hint: HINTS[error.code],
         details: error.details,
       });
     }

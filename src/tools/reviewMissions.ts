@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AiworkpayClient } from '../api/client.js';
-import type { Config } from '../config.js';
+import type { ServerConfig } from '../config.js';
 import { missionView } from '../domain/missionStatus.js';
 import { log } from '../log.js';
 import { GuardError } from '../safety/spendGuard.js';
@@ -18,7 +18,7 @@ const confirm = z
   .default(false)
   .describe('false (default): preview only, nothing changes. true: do it.');
 
-export function registerReviewTools(server: McpServer, deps: { client: AiworkpayClient; config: Config }): void {
+export function registerReviewTools(server: McpServer, deps: { client: AiworkpayClient; config: ServerConfig }): void {
   const { client, config } = deps;
   const twoSteps = config.requireConfirmation
     ? 'Two steps: call with confirm=false for a preview, then again with confirm=true. '
