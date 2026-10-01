@@ -1,161 +1,165 @@
 # AIWorkPay MCP Server — Analyse de l'existant et architecture V1
 
 > Statut : **proposition, à valider avant implémentation.**
-> Analyse réalisée sur `cortexAI-2025/aiworkpay` @ `9a3ac79` (2026-09-26).
-
-## 0. Quel backend ?
-
-Le dépôt `aiworkpay-mcp-server` est vide. Plusieurs dépôts AIWorkPay coexistent :
-
-| Dépôt | Stack | Verdict |
-| --- | --- | --- |
-| **`aiworkpay`** (privé) | Vite/React + **Supabase** (Postgres, RLS, Edge Functions Deno) + Stripe | **Cible retenue.** Le plus récent, API documentée (`public/openapi.yaml`, `public/llms.txt`), clés API hachées avec scopes, wallet agent, politique de dépense, séquestre, audit log, rate limiting. |
-| `Aiworkpay-v2` | Next.js + Prisma + Stripe | Implémentation parallèle plus simple : clés API en clair, sans scopes, sans wallet ni politique de dépense. Non retenu. |
-| `AIWorkPay-SDK-v1` | SDK Python | Cible une API `/tasks` (`create_task`, `approve_and_pay`) **qui n'existe pas** dans le backend actuel : obsolète. |
-| `AIWorkPay-Backend-v1` | — | Dépôt vide. |
-
-Tout ce qui suit concerne `aiworkpay`.
+> Backend de référence : **`cortexAI-2025/Aiworkpay-v2`** @ `eb90e1b` (2026-09-24).
 
 ## 1. Architecture existante
 
 ```
-Web app (React, Vite)  ──► Supabase client (anon key + RLS)
-Agents / Payworkers    ──► Edge Functions  /functions/v1/{missions,payments}
-                                │  auth (_shared/auth.ts) → rate limit → authorize(route, scope)
-                                ▼
-                       PostgreSQL : fonctions SECURITY DEFINER atomiques
-                       (create_mission, validate_assignment, expire_mission…)
-                                │
-Stripe ──► /functions/v1/stripe-webhook (financement wallet, Connect, litiges)
+Navigateur / app Android (WebView)
+        │  session NextAuth (cookie)
+        ▼
+Next.js 15 (App Router) ── middleware : protège /dashboard
+  ├─ pages /dashboard/*            (rendu serveur, Prisma direct)
+  ├─ app/api/*                     (route handlers REST)
+  │     ├─ missions                 POST/GET  ← clé API agent (Bearer awp_…)
+  │     ├─ missions/[id]/accept     PUT       ← session payworker
+  │     ├─ missions/[id]/status     PATCH     ← session payworker / admin
+  │     ├─ apikeys, apikeys/[id]    ← session admin
+  │     ├─ payments/*               ← session (Stripe Connect, portail)
+  │     └─ stripe/webhooks          ← signature Stripe
+  ▼
+Prisma 5 → PostgreSQL           Stripe (PaymentIntent, Connect, Transfers)
 ```
 
-Principe fort du backend : **les Edge Functions ne modifient jamais un solde** ;
-toute transition passe par une fonction SQL transactionnelle qui revérifie
-politique, propriété et rôle. Le MCP doit s'appuyer sur ce contrat, pas le dupliquer.
+Stack : Next.js 15, React 18, NextAuth v5 (credentials + OAuth), Prisma 5,
+PostgreSQL, Stripe, Resend, zod. Déploiement Docker (`prisma migrate deploy`
+au démarrage), sonde `GET /api/health`.
 
-## 2. Endpoints disponibles (`/functions/v1`)
+## 2. Endpoints existants
 
-| Méthode | Route | Acteur | Scope |
+| Méthode | Route | Auth | Effet |
 | --- | --- | --- | --- |
-| POST | `/missions` | agent | `missions:write` — **débite** `unit_price × slots` (séquestre) |
-| GET | `/missions?status=&limit=&mine=` | agent / payworker | `missions:read` |
-| GET | `/missions/{id}` | agent / payworker | `missions:read` |
-| PUT | `/missions/{id}` | agent | `missions:write` (titre, description, priorité, skills ; prix et slots immuables) |
-| GET | `/missions/{id}/assignments` | agent / payworker | `missions:read` |
-| POST | `/missions/{id}/expire` | agent | `missions:write` — uniquement **après** la deadline, rembourse le non réglé |
-| POST | `/missions/{id}/take` | payworker | — |
-| POST | `/missions/assignments/{id}/submit` | payworker | — |
-| POST | `/missions/assignments/{id}/revise` | agent | `missions:validate` — aucun mouvement d'argent |
-| POST | `/missions/assignments/{id}/validate` | agent | `missions:validate` — **libère le paiement** (90/10) |
-| POST | `/missions/assignments/{id}/abandon` | payworker | — |
-| POST | `/payments/funding` | agent | `payments:fund` — URL Stripe Checkout, payée par un humain |
-| POST | `/payments/withdrawals`, `/payments/connect/*` | payworker | — |
+| POST | `/api/missions` | `Bearer awp_…` (clé API) | Crée la mission (`PAYMENT_PENDING`) + un **PaymentIntent Stripe**. Avec `paymentMethodId` : **débit immédiat** de la carte. Sinon renvoie un `clientSecret` à confirmer. |
+| GET | `/api/missions?limit&skip` | clé API | Missions créées par **cette clé**. (Le filtre `status` est ignoré dans ce cas.) |
+| GET | `/api/missions?status` | session | Marketplace (défaut `PUBLISHED`). |
+| PUT | `/api/missions/{id}/accept` | session payworker onboardé Stripe | `PUBLISHED → ASSIGNED` (compare-and-set). |
+| PATCH | `/api/missions/{id}/status` | session payworker assigné / admin | Payworker : `ASSIGNED → IN_PROGRESS → DELIVERED`. Admin : `DELIVERED → COMPLETED` (split 90/10 + transfert Stripe), `* → CANCELED` (remboursement / annulation du PI). |
+| GET/POST | `/api/apikeys` | session **admin** | Lister / générer une clé. |
+| DELETE | `/api/apikeys/{id}` | session admin | Révoquer une clé. |
+| POST | `/api/stripe/webhooks` | signature Stripe | `payment_intent.succeeded → PUBLISHED`, `payment_failed → CANCELED`, `transfer.created → payout SUCCEEDED`. |
 
-Conventions : montants en **centimes entiers**, devises **EUR / USD**, erreurs
-`{ error: { code, message, request_id } }`, en-tête `X-Request-Id` accepté et
-renvoyé, 120 req/min par agent, `429` + `Retry-After`. Pas de webhooks : polling.
+**Il n'existe aucune route API pour lire une mission par id**, ni pour livrer
+un résultat, ni pour qu'un agent valide ou annule.
 
-## 3. Modèles
+## 3. Modèles (Prisma)
 
-- **Mission** (`missions`) : lot de N exécutions identiques au prix unitaire
-  `unit_price_cents`. Champs : `title`, `description`, `slots_total/taken/settled`,
-  `deadline`, `priority`, `status ∈ {open, in_progress, completed, expired}`,
-  `expertise_required`, `skills_required`, **`executor_type ∈ {payworker, agent, api, service}`**,
-  `requires_human_validation`, `commission_rate`.
-- **Assignment** (`mission_assignments`) : une exécution par un payworker.
-  `status ∈ {in_progress, submitted, settled, abandoned}`, `submission` (texte ≤ 20 000),
-  `feedback`, `attempts`, horodatages. **C'est là que vit le résultat.**
-- **User** (`profiles`) : `user_type` (`ai` = mode agent, sinon payworker), expertise, abonnement.
-- **Agent** = `agent_wallets` : identité économique `agent_ref` (`APA-…`), devise,
-  `balance_cents`, `reserved_cents`, statut. **Un seul wallet par compte.**
-- **Spending policy** : budget mensuel, limite journalière, max par opération,
-  seuil de validation humaine, catégories autorisées.
-- **Worker** : pas de table dédiée ; un payworker est un `profile` + `payworker_earnings`
-  + compte Stripe Connect. Réputation calculée côté front (`useReputation`).
+- **User** : `role ∈ {PAYWORKER, ADMIN}` (admin = email listé dans `ADMIN_EMAILS`),
+  compte Stripe Connect (`stripeAccountId`, `stripeAccountOnboarded`). Pas de rôle « agent ».
+- **ApiKey** = **l'identité de l'agent** : `key` (en clair), `label`, `active`,
+  `stripeCustomerId` (un client Stripe par agent), `createdByUserId` (l'admin propriétaire).
+- **Mission** : `title`, `description`, `budget` (Decimal 10,2), `currency` (3 lettres, défaut EUR),
+  `deadline`, `priority`, `status`, `stripePaymentIntentId`, `platformFeeAmount`,
+  `payworkerAmount`, `createdByApiKeyId`, `assignedToUserId` (**un seul exécutant**).
+- **MissionStatus** : `PAYMENT_PENDING → PUBLISHED → ASSIGNED → IN_PROGRESS → DELIVERED → COMPLETED`, et `CANCELED`.
+  (`CREATED` existe dans l'enum mais n'est jamais utilisé.)
+- **MissionAttachment** : `url`, `filename`, `mimeType`, `size` — affiché dans le dashboard
+  mais **aucune route ne permet d'en créer**.
+- **Transaction** : `AGENT_PAYMENT`, `PLATFORM_FEE`, `PAYWORKER_PAYOUT` (+ legacy), statut, ids Stripe.
 
 ## 4. Authentification
 
-- Agents : `X-API-Key: aiwp_…` → `verify_api_key()` (SHA-256, expiration, révocation,
-  `last_used`) → `{ walletId, agentRef, scopes }`. Max 5 clés actives par compte.
-- Scopes : `missions:read`, `missions:write`, `missions:validate`, `payments:fund`.
-- Payworkers : `Authorization: Bearer <session Supabase>`.
-- Le MCP n'a besoin **que** de la clé agent. Jamais de clé service-role ni de clé Stripe.
+- **Agents** : `Authorization: Bearer awp_<72 hex>`, comparée **en clair** en base
+  (`findFirst({ key, active: true })`). Pas de scopes, pas d'expiration, pas de
+  `last_used`, pas de rate limiting. Clés créées uniquement par un admin.
+- **Humains** : NextAuth (JWT de session), email/mot de passe, téléphone, OAuth.
+- Conséquence pour le MCP : **une clé API = un agent**. C'est suffisant pour
+  donner à chaque agent sa propre identité dès la V1 ; les permissions fines manquent.
 
 ## 5. Paiements
 
-Financement par carte (Stripe Checkout, crédité uniquement sur webhook signé) →
-débit réel à la commande, mis en séquestre → libération par exécution validée
-(90 % payworker / 10 % commission, réduite selon abonnement) → remboursement du
-non-réglé à l'expiration (le travail soumis avant la deadline reste payé) →
-retrait payworker via Stripe Connect. Politique de dépense appliquée
-atomiquement en SQL sur le **total du lot**.
+1. Création de mission → PaymentIntent du montant `budget` sur le client Stripe de la clé.
+2. Paiement confirmé (webhook) → mission `PUBLISHED`. Les fonds sont encaissés sur la plateforme.
+3. Admin passe `DELIVERED → COMPLETED` → transaction atomique (fee 10 % + payout 90 %
+   `PENDING`) puis `stripe.transfers.create` vers le compte Connect du payworker
+   (clé d'idempotence `mission_payout_{id}`).
+4. Annulation (admin) → remboursement si payé, sinon annulation du PI.
 
-## 6. Réutilisable tel quel
+Points forts : publication conditionnée au paiement confirmé par webhook,
+compare-and-set à l'acceptation et à la complétion, idempotence Stripe sur
+transferts/remboursements.
 
-- Tout le cycle de vie mission : création, lecture, liste, suivi des exécutions,
-  validation / demande de révision, expiration.
-- Identité par agent + scopes par clé → permissions MCP **sans rien ajouter**.
-- Contrôles financiers serveur (solde, plafonds, budget, catégories), rate limiting,
-  audit log, request-id : le MCP n'a pas à les réimplémenter.
-- `executor_type` : déjà prévu pour router vers humain / agent / API / service.
-- `openapi.yaml` : source pour générer/typer le client HTTP du MCP.
+## 6. Ce qui est directement réutilisable
 
-## 7. Ce qui manque (écarts)
+- `POST /api/missions` et `GET /api/missions` avec la clé API : création et liste.
+- La clé API comme identité d'agent (avec un client Stripe dédié par agent).
+- Le cycle de statuts et le paiement conditionnant la publication : **aucune mission
+  n'est publiée sans paiement explicite**, ce qui va dans le sens du « pas de dépense implicite ».
+- Le split 90/10, les transferts Connect, les remboursements.
+- `MissionAttachment` comme support des pièces jointes (brief et preuves).
 
-Classés par impact sur la V1. « Backend » = à faire dans `aiworkpay`, pas dans le MCP.
+## 7. Ce qui manque pour exposer proprement AIWorkPay via MCP
 
-| # | Écart | Impact | Proposition |
+### 7.1 Bloquant pour la V1 (côté backend, ajouts sans casser l'existant)
+
+| # | Manque | Pourquoi c'est bloquant | Ajout proposé dans `Aiworkpay-v2` |
 | --- | --- | --- | --- |
-| G1 | **Pas d'annulation** : seul `expire` existe, et uniquement après la deadline. | `cancel_mission()` impossible proprement. | Backend : RPC `cancel_mission` qui ferme la mission et rembourse les slots non pris (les exécutions en cours/soumises restent dues). En attendant, le MCP n'expose pas `cancel_mission` ou le limite aux missions échues. |
-| G2 | **Pas d'idempotence** sur `POST /missions`. Un retry réseau = double débit. | Risque financier réel. | Backend : en-tête `Idempotency-Key` + colonne unique `(agent_wallet_id, idempotency_key)`. MCP : envoie toujours la clé ; garde-fou local de déduplication en attendant. |
-| G3 | **`requires_human_validation` n'est qu'un drapeau** : la mission est débitée et publiée quand même. | La « validation explicite » de la politique n'est pas appliquée. | Backend : statut `pending_approval` non visible du marketplace tant que le propriétaire n'a pas approuvé. MCP : signale clairement le cas dans la réponse. |
-| G4 | **Pas de champs structurés** : ni `type`, ni `location`, ni exigences de preuve. | Le MCP doit sérialiser ces informations dans `description`. | V1 : gabarit Markdown déterministe dans `description`. Backend (V2) : colonnes `mission_type`, `location` (JSONB), `proof_requirements` (JSONB). |
-| G5 | **Preuve = texte libre** (≤ 20 000 car.), pas de photos/fichiers ni de résultat structuré. | `get_mission_result()` renvoie du texte (éventuellement des URLs). | V1 : on renvoie le texte tel quel + tentative de parse JSON. Backend (V2) : Supabase Storage pour les pièces jointes + `result` JSONB validé contre un schéma fourni à la création. |
-| G6 | **Devises EUR/USD uniquement.** | L'exemple Casablanca en **MAD** sera refusé. | V1 : le MCP refuse explicitement toute autre devise que celle du wallet. Le MAD est une décision produit/backend. |
-| G7 | **Pas de lecture du wallet / politique par l'agent** via l'API. | L'agent ne peut pas connaître son budget restant avant de commander. | Backend : `GET /wallet` (solde, réservé, limites restantes) sous `missions:read`. Permettrait un vrai `estimate_mission()`. |
-| G8 | **Une identité agent = un compte.** | Plusieurs agents d'un même propriétaire = plusieurs comptes. | Suffisant pour la V1 (une clé par agent). À terme : plusieurs wallets par compte. |
-| G9 | Pas de webhooks. | Suivi par polling. | V1 : polling. V2 : webhooks / notifications MCP. |
-| G10 | SDK Python obsolète (`/tasks`). | Hors périmètre MCP. | À réaligner sur `openapi.yaml` séparément. |
+| B1 | **Lecture d'une mission par id** pour un agent | `get_mission` / `get_mission_status` impossibles (sinon il faut paginer toute la liste). | `GET /api/missions/{id}` (clé API, limité aux missions de la clé ; 404 sinon). |
+| B2 | **Aucun résultat livrable** : `DELIVERED` est un simple changement de statut, sans contenu. | `get_mission_result` n'a rien à renvoyer : c'est le cœur de l'objectif. | Champs `Mission.result` (Json), `resultNote` (texte), `deliveredAt` ; route payworker `POST /api/missions/{id}/deliver` `{ note, data?, attachments?[] }` qui passe à `DELIVERED`. `MissionAttachment.kind ∈ {BRIEF, PROOF}`. |
+| B3 | **Pas d'idempotence** à la création | Un retry réseau de l'agent = deux missions et deux paiements. | En-tête `Idempotency-Key` → colonne `Mission.idempotencyKey`, unique par `createdByApiKeyId` ; un doublon renvoie la mission existante. |
+| B4 | **Payer sans humain ni secret Stripe** | Le `clientSecret` doit être confirmé par Stripe.js, inaccessible à la plupart des agents ; `paymentMethodId` débite immédiatement. | Option `payment: "checkout"` : la création renvoie une **URL Stripe Checkout** que l'agent transmet à son propriétaire humain → validation explicite naturelle. `paymentMethodId` reste disponible mais derrière un garde-fou (§ 8.5). |
+
+### 7.2 Important (V1.1)
+
+| # | Manque | Ajout proposé |
+| --- | --- | --- |
+| I1 | L'agent ne peut **ni valider ni refuser** la livraison (admin seulement). | `POST /api/missions/{id}/approve` (clé API propriétaire, `DELIVERED → COMPLETED`, réutilise la logique 90/10 existante) et `POST /api/missions/{id}/request-changes` (`DELIVERED → IN_PROGRESS` + feedback). |
+| I2 | L'agent ne peut **pas annuler** (admin seulement). | `POST /api/missions/{id}/cancel` (clé API propriétaire, uniquement `PAYMENT_PENDING` ou `PUBLISHED` ; réutilise le remboursement existant). |
+| I3 | Clés API **en clair**, sans scopes ni expiration. | Stocker `keyHash` (SHA-256) + `keyPrefix`, `scopes String[]` (`missions:read`, `missions:write`, `missions:approve`), `expiresAt`, `lastUsedAt`. Migration : révoquer ou re-hacher. |
+| I4 | Pas de plafond de dépense par agent. | `ApiKey.maxMissionBudget`, `ApiKey.monthlyBudget` vérifiés à la création. |
+| I5 | Pas de rate limiting. | Limite par clé sur `POST /api/missions` (ex. 10/heure), réponse `429` + `Retry-After`. |
+| I6 | Erreurs en texte libre (`{ error: "…" }`). | Ajouter un `code` stable (`MISSION_NOT_FOUND`, `INVALID_BODY`…) sans retirer `error`. |
+| I7 | Pas de champs structurés (type, lieu, livrables attendus). | `Mission.type`, `Mission.location` (Json), `Mission.requirements` (Json : photos, champs, horodatage…). En attendant, le MCP les sérialise dans `description`. |
+
+### 7.3 Petits défauts relevés au passage
+
+- `GET /api/missions` avec clé API ignore `?status=`.
+- `GET /api/missions?status=XYZ` (session) : statut non validé → erreur Prisma → 500.
+- Si `stripe.paymentIntents.create` échoue, la mission reste orpheline en `PAYMENT_PENDING`.
+- `payment_intent.payment_failed` annule définitivement la mission alors qu'un PI peut être retenté.
+- `Math.round(budget * 100)` est faux pour les devises sans décimales (JPY…) ; à vérifier
+  pour le **MAD** (décimal, OK pour les paiements Stripe, mais les transferts Connect
+  doivent être testés).
 
 ## 8. Architecture MCP V1 proposée
 
 ### 8.1 Principes
 
-1. **Couche fine** : aucune logique métier ni financière dupliquée ; chaque tool = 1–2 appels API.
-2. **Identité = clé API de l'agent** : le MCP ne détient aucun secret propre et
-   ne peut rien faire que la clé ne permette déjà (scopes vérifiés par le backend).
-3. **Aucune dépense implicite** : la création est en deux temps (aperçu → confirmation)
-   et bornée par un plafond configuré côté opérateur.
-4. **Erreurs fidèles** : codes du backend (`INSUFFICIENT_BALANCE`, `EXCEEDS_DAILY_LIMIT`…)
-   et `request_id` remontés tels quels à l'agent.
+1. **Couche fine** : chaque tool = 1 appel HTTP vers `Aiworkpay-v2`. Aucune logique
+   de paiement, de statut ou de commission dans le MCP.
+2. **Identité = clé API de l'agent**. Le MCP ne détient aucun secret propre
+   (ni `STRIPE_SECRET_KEY`, ni `DATABASE_URL`) et ne peut rien faire que la clé ne permette.
+3. **Aucune dépense implicite** : création en deux temps (aperçu → `confirm: true`),
+   plafond par mission, paiement par lien Checkout par défaut.
+4. **Statuts lisibles par un agent** : traduction des statuts internes + « prochaine action ».
 
 ### 8.2 Stack
 
-- TypeScript, Node ≥ 20, `@modelcontextprotocol/sdk`, `zod` pour les schémas d'entrée/sortie.
+- TypeScript, Node ≥ 20, `@modelcontextprotocol/sdk`, `zod` (déjà utilisé par v2).
 - Transport **stdio** en V1 (Claude Desktop, Claude Code, agents locaux).
-  Transport **Streamable HTTP** en V1.1 (agents distants) : la clé est alors lue
-  depuis l'en-tête de chaque session, jamais stockée.
-- Tests : `vitest` avec `fetch` simulé (aucun appel réseau réel).
+  **Streamable HTTP** en V1.1 : la clé est lue dans l'en-tête de chaque session, jamais persistée.
+  À terme, ce transport pourrait être monté directement dans Next.js (`app/api/mcp/route.ts`).
+- Tests : `vitest`, `fetch` simulé.
 
 ### 8.3 Arborescence
 
 ```
 src/
-  index.ts              point d'entrée stdio
-  server.ts             création du McpServer, enregistrement des tools
-  config.ts             lecture/validation de l'environnement
+  index.ts             point d'entrée stdio
+  server.ts            McpServer + enregistrement des tools
+  config.ts            variables d'environnement (zod)
   api/
-    client.ts           client HTTP typé (X-API-Key, X-Request-Id, timeout, 429/Retry-After)
-    types.ts            Mission, Assignment, ApiError (alignés sur openapi.yaml)
+    client.ts          client HTTP : Bearer, Idempotency-Key, timeout, erreurs typées
+    types.ts           Mission, MissionStatus… (alignés sur prisma/schema.prisma)
   domain/
-    missionInput.ts     entrée MCP → CreateMissionRequest (gabarit description, cents)
-    missionStatus.ts    agrégation mission + assignments → statut lisible par un agent
+    missionInput.ts    entrée MCP → corps POST /api/missions (gabarit de description)
+    missionStatus.ts   statut interne → statut agent + next_action
   safety/
-    spendGuard.ts       plafond par mission, confirmation explicite
-    dedupe.ts           clé d'idempotence + déduplication locale
+    spendGuard.ts      plafond, confirmation, devises autorisées
+    creationLimiter.ts limite de créations par heure (anti-boucle)
   tools/
-    createMission.ts  getMission.ts  listMissions.ts
-    getMissionStatus.ts  getMissionResult.ts
+    createMission.ts getMission.ts listMissions.ts
+    getMissionStatus.ts getMissionResult.ts cancelMission.ts
 test/
 docs/ARCHITECTURE.md
 ```
@@ -164,103 +168,117 @@ docs/ARCHITECTURE.md
 
 | Variable | Rôle | Défaut |
 | --- | --- | --- |
-| `AIWORKPAY_API_URL` | `https://<ref>.supabase.co/functions/v1` | requis |
-| `AIWORKPAY_API_KEY` | clé agent `aiwp_…` (identité + scopes) | requis |
-| `AIWORKPAY_MAX_MISSION_CENTS` | plafond total par mission, appliqué **avant** l'appel API | `5000` |
+| `AIWORKPAY_BASE_URL` | ex. `https://aiworkpay.fr` | requis |
+| `AIWORKPAY_API_KEY` | clé agent `awp_…` | requis |
+| `AIWORKPAY_MAX_MISSION_BUDGET` | plafond par mission, vérifié avant l'appel | `50` |
+| `AIWORKPAY_ALLOWED_CURRENCIES` | ex. `EUR,MAD` | `EUR` |
 | `AIWORKPAY_REQUIRE_CONFIRMATION` | création en deux temps | `true` |
-| `AIWORKPAY_MAX_CREATIONS_PER_HOUR` | frein anti-boucle côté MCP | `10` |
-
-Le plafond MCP s'ajoute à la politique de dépense serveur ; il ne la remplace pas.
+| `AIWORKPAY_ALLOW_DIRECT_CHARGE` | autorise `payment_method_id` (débit sans humain) | `false` |
+| `AIWORKPAY_MAX_CREATIONS_PER_HOUR` | frein anti-boucle | `10` |
 
 ### 8.5 Tools V1
 
-| Tool | API | Annotations MCP |
-| --- | --- | --- |
-| `create_mission` | `POST /missions` | `destructiveHint: true`, `idempotentHint: false`, `openWorldHint: true` |
-| `get_mission` | `GET /missions/{id}` | `readOnlyHint: true` |
-| `list_missions` | `GET /missions` | `readOnlyHint: true` |
-| `get_mission_status` | `GET /missions/{id}` + `GET /missions/{id}/assignments` | `readOnlyHint: true` |
-| `get_mission_result` | `GET /missions/{id}/assignments` | `readOnlyHint: true` |
+| Tool | Appel | Disponible | Annotations |
+| --- | --- | --- | --- |
+| `create_mission` | `POST /api/missions` | **oui** (idempotence et Checkout : B3, B4) | `destructiveHint`, `openWorldHint` |
+| `list_missions` | `GET /api/missions` | **oui** | `readOnlyHint` |
+| `get_mission` | `GET /api/missions/{id}` | après **B1** | `readOnlyHint` |
+| `get_mission_status` | `GET /api/missions/{id}` | après **B1** | `readOnlyHint` |
+| `get_mission_result` | `GET /api/missions/{id}` | après **B2** | `readOnlyHint` |
+| `cancel_mission` | `POST /api/missions/{id}/cancel` | après **I2** | `destructiveHint` |
 
 **`create_mission`** — entrée :
 
 ```ts
 {
   type: "physical_verification" | "photo" | "phone_call" | "data_collection" | "other",
-  title: string,                 // ≤ 200
-  instructions: string,          // corps de la mission
+  title: string,                     // 3–200
+  instructions: string,              // ≥ 10
   location?: { city?: string, address?: string, country?: string },
-  deliverables?: string[],       // ex. ["photo de la façade", "horaires", "date/heure"]
-  unit_price: number,            // montant décimal par exécution, ex. 12.50
-  currency: "EUR" | "USD",       // doit correspondre au wallet
-  slots?: number,                // défaut 1 (ex. 20 commerces = 20 slots)
-  deadline: string,              // ISO 8601, futur
-  priority?, expertise_required?, skills_required?,
-  client_reference?: string,     // identifiant métier de l'agent → idempotence
-  confirm?: boolean              // false/absent = aperçu, aucune dépense
+  deliverables?: string[],           // ex. ["photo de la façade", "horaires", "date/heure"]
+  budget: number,                    // montant total payé pour la mission
+  currency: string,                  // doit figurer dans AIWORKPAY_ALLOWED_CURRENCIES
+  deadline: string,                  // ISO 8601, futur
+  priority?: "low" | "medium" | "high",
+  client_reference?: string,         // identifiant métier → Idempotency-Key
+  payment_method_id?: string,        // ignoré sauf si AIWORKPAY_ALLOW_DIRECT_CHARGE=true
+  confirm?: boolean                  // absent/false = aperçu, aucun appel API
 }
 ```
 
 Comportement :
-1. Valide l'entrée (zod), convertit en centimes, calcule `total = unit × slots`.
-2. Refuse si `total > AIWORKPAY_MAX_MISSION_CENTS` (`MCP_BUDGET_CAP_EXCEEDED`).
-3. Si `confirm !== true` (et confirmation requise) : renvoie un **aperçu** (montant
-   total débité, devise, description générée, rappel « débit immédiat en séquestre »)
-   sans appeler l'API. Si le client supporte l'*elicitation* MCP, la confirmation
-   peut être demandée directement à l'humain.
-4. Sinon : `POST /missions` avec `Idempotency-Key` dérivée de `client_reference`
-   (ou du hash de la requête) et `X-Request-Id`.
-5. Renvoie `mission`, `debit`, `requires_human_validation`, `request_id`.
+1. Validation zod ; refus si `budget > AIWORKPAY_MAX_MISSION_BUDGET` ou devise non autorisée.
+2. Sans `confirm: true` : renvoie un **aperçu** (montant, devise, description générée,
+   mode de paiement) sans appeler l'API. Si le client MCP supporte l'*elicitation*,
+   la confirmation est demandée directement à l'humain.
+3. Avec `confirm: true` : `POST /api/missions` avec `Idempotency-Key`
+   (dérivée de `client_reference`, sinon du hash du contenu).
+4. Renvoie `mission_id`, `status: "awaiting_payment"`, et selon le mode :
+   `payment_url` (Checkout, à transmettre au propriétaire) ou `client_secret`,
+   et le statut du paiement si débit direct.
 
-`type`, `location` et `deliverables` sont rendus dans `description` via un gabarit
-fixe (écart G4), pour que le payworker voie exactement ce qui est attendu.
+`type`, `location` et `deliverables` sont rendus dans `description` par un gabarit
+fixe (en attendant I7). Le gabarit demande au payworker de livrer un résultat
+structuré, avec des photos horodatées, quand la mission l'exige.
 
-**`get_mission_status`** — sortie normalisée pour un agent :
+**Correspondance des statuts** (`get_mission_status`) :
 
-```ts
-{
-  mission_id, status,           // open | in_progress | awaiting_review | completed | expired
-  slots: { total, taken, submitted, settled, in_progress, available },
-  deadline, is_past_deadline,
-  next_action                   // ex. "2 exécutions attendent votre validation"
-}
-```
+| Interne | Agent | `next_action` |
+| --- | --- | --- |
+| `PAYMENT_PENDING` | `awaiting_payment` | « Le paiement doit être confirmé (lien transmis au propriétaire). » |
+| `PUBLISHED` | `open` | « En attente d'un Payworker. » |
+| `ASSIGNED`, `IN_PROGRESS` | `in_progress` | « Un Payworker exécute la mission. » |
+| `DELIVERED` | `delivered` | « Résultat disponible : appelez get_mission_result. » |
+| `COMPLETED` | `completed` | « Résultat validé et payé. » |
+| `CANCELED` | `canceled` | — |
 
-**`get_mission_result`** — les exécutions `submitted` / `settled` :
-`{ assignment_id, status, submission, submission_json?, attempts, submitted_at, settled_at }`.
-`submission_json` est rempli si la preuve est un JSON valide (convention recommandée
-aux payworkers dans le gabarit).
+Plus `deadline`, `is_past_deadline`, `updated_at`.
 
-### 8.6 Hors V1 (déjà possibles, à ajouter ensuite)
+**`get_mission_result`** : `{ mission_id, status, delivered_at, note, data, attachments[] }`
+quand le statut est `delivered` ou `completed` ; sinon une erreur explicite
+`RESULT_NOT_AVAILABLE` avec le statut courant.
+
+### 8.6 Après la V1
 
 | Tool | Dépend de |
 | --- | --- |
-| `approve_result` → `/assignments/{id}/validate` | Disponible. Libère un paiement : même mécanisme de confirmation que la création. **Recommandé en V1.1**, sinon le travail n'est payé qu'à l'expiration. |
-| `request_revision` → `/assignments/{id}/revise` | Disponible, sans mouvement d'argent. |
-| `close_expired_mission` → `/missions/{id}/expire` | Disponible. |
-| `cancel_mission` | **G1** (backend). |
-| `estimate_mission`, `get_wallet` | **G7** (backend). |
-| `find_worker`, `assign_worker`, `rate_worker` | Nouveaux endpoints backend (matching, réputation serveur). |
-| `release_payment` | Couvert par `approve_result` (le modèle libère par exécution). |
+| `approve_result`, `request_changes` | I1 (déclenche le paiement du payworker → même confirmation que la création) |
+| `estimate_mission` | Grille tarifaire côté backend |
+| `find_worker`, `assign_worker`, `rate_worker` | Matching, réputation : nouveaux modèles |
+| `release_payment` | Couvert par `approve_result` |
+| Routage humain / agent / API | Champ `Mission.executorType` (le dépôt `aiworkpay` Supabase en a déjà un modèle) |
 
 ### 8.7 Sécurité — synthèse
 
-| Exigence | Où elle est assurée |
-| --- | --- |
-| Authentification | Backend (clé hachée). Le MCP transmet la clé, ne la logue jamais. |
-| Permissions / scopes | Backend (`ROUTE_RULES`). Recommandation : clé MCP avec `missions:read` + `missions:write` seulement en V1 ; jamais `payments:fund`. |
-| Budget maximum | Serveur (politique de dépense) **+** plafond MCP par mission. |
-| Validation explicite | MCP (aperçu → `confirm`) ; backend à compléter (G3). |
-| Idempotence | MCP (clé + dédup locale) ; backend à compléter (G2). |
-| Journalisation | Backend (`audit_log`, request-id) ; MCP : logs JSON sur **stderr** (stdout réservé au protocole), clé masquée. |
-| Traçabilité | `X-Request-Id` généré par appel et renvoyé à l'agent ; `agent_ref` dans les réponses. |
-| Contrôle des résultats | Révision/validation par l'agent (V1.1) ; paiement automatique à l'expiration du travail soumis. |
-| Anti-abus | Backend 120 req/min ; MCP `AIWORKPAY_MAX_CREATIONS_PER_HOUR` + dédup. |
+| Exigence | V1 (MCP + backend existant) | À compléter côté backend |
+| --- | --- | --- |
+| Authentification | Clé API par agent, transmise par le MCP, jamais loguée. | Hachage des clés (I3). |
+| Permissions / scopes | Une clé = un agent ; propriété vérifiée par `createdByApiKeyId`. | Scopes (I3). |
+| Budget maximum | Plafond MCP par mission + devises autorisées. | Plafonds par clé (I4). |
+| Validation explicite | Aperçu → `confirm` ; paiement Checkout par un humain ; débit direct désactivé par défaut. | — |
+| Idempotence | `Idempotency-Key` envoyée systématiquement. | Prise en charge serveur (B3). |
+| Journalisation / traçabilité | Logs JSON sur **stderr** (stdout réservé au protocole), clé masquée, `X-Request-Id` par appel. | `X-Request-Id` dans les logs serveur. |
+| Contrôle des résultats | Lecture du résultat livré. | Validation / refus par l'agent (I1). |
+| Anti-abus | Limite de créations par heure côté MCP. | Rate limiting serveur (I5). |
 
-## 9. Points à trancher avant implémentation
+### 8.8 Ce qu'on peut reprendre du dépôt `aiworkpay` (Supabase)
 
-1. Confirmer que **`aiworkpay` (Supabase)** est bien le backend de référence.
-2. `cancel_mission` : ajouter la RPC backend (G1) maintenant, ou la reporter ?
-3. Inclure `approve_result` / `request_revision` dès la V1 ?
-4. Idempotence (G2) et blocage `requires_human_validation` (G3) : à traiter côté backend en parallèle ?
-5. Devise MAD : besoin produit à court terme ?
+Ce dépôt, plus avancé sur la sécurité, contient des modèles directement transposables
+à v2 : clés hachées avec scopes et quota (`verify_api_key`), politique de dépense
+par agent, mapping d'erreurs avec codes stables, rate limiting, `X-Request-Id`
+et `executor_type`. Il servira de référence pour I3 à I6, pas de dépendance.
+
+## 9. Plan proposé
+
+1. **PR backend `Aiworkpay-v2`** (additive, rétrocompatible) : B1, B2, B3, B4 + correctifs § 7.3.
+2. **MCP V1** dans ce dépôt : les 5 tools, garde-fous, tests ; `cancel_mission` si I2 est inclus dans la PR backend.
+3. **V1.1** : I1–I6, `approve_result` / `request_changes`, transport HTTP.
+
+## 10. Décisions attendues
+
+1. Valider le plan : PR backend minimale dans `Aiworkpay-v2` **avant** le MCP ?
+   (Sans B1/B2, le MCP ne peut que créer et lister des missions.)
+2. Paiement par défaut : **lien Checkout payé par un humain** (recommandé), ou débit
+   direct d'une carte enregistrée de l'agent ?
+3. Inclure l'annulation (I2) et la validation par l'agent (I1) dès cette première PR ?
+4. Devise **MAD** à autoriser dès la V1 ?
