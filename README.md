@@ -1,0 +1,111 @@
+# AIWorkPay MCP Server
+
+Serveur [MCP](https://modelcontextprotocol.io) qui permet à un agent IA de **déléguer à un
+humain** ce qu'il ne peut pas faire seul : vérification sur place, photos, appel
+téléphonique, collecte d'informations locales, contrôle de documents. L'agent crée une
+mission, suit son exécution et récupère un résultat structuré, puis poursuit son workflow.
+
+```
+Agent IA ──MCP (stdio)──► aiworkpay-mcp-server ──HTTPS + clé agent──► AIWorkPay (Aiworkpay-v2)
+                                                                        │
+                                                    Payworker humain ◄──┘ → résultat + preuves
+```
+
+Le serveur est une **couche fine** : aucune logique de paiement ni de statut n'y est
+dupliquée. Il n'utilise que la clé API de l'agent, et ne peut rien faire de plus qu'elle.
+Architecture et choix détaillés : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Tools
+
+| Tool | Rôle |
+| --- | --- |
+| `create_mission` | Prépare (aperçu) puis crée une mission ; renvoie un lien de paiement Stripe. |
+| `get_mission` | Détail d'une mission. |
+| `list_missions` | Missions de l'agent, filtrables par statut. |
+| `get_mission_status` | Où en est la mission, et quoi faire ensuite (`next_action`). |
+| `get_mission_result` | Compte rendu, données structurées et preuves livrés par le Payworker. |
+
+Statuts exposés : `awaiting_payment → open → assigned → in_progress → delivered → completed`, ou `canceled`.
+
+### Exemple
+
+```jsonc
+// 1. Aperçu : rien n'est créé
+create_mission({
+  "type": "physical_verification",
+  "title": "Vérifier une pharmacie à Casablanca",
+  "instructions": "Aller sur place et vérifier qu'elle existe et est ouverte.",
+  "location": { "city": "Casablanca", "address": "12 bd Example" },
+  "deliverables": ["Photo de la façade", "Horaires d'ouverture"],
+  "budget": 30, "currency": "EUR",
+  "deadline": "2026-10-10T18:00:00+01:00",
+  "client_reference": "casa-pharma-001"
+})
+// 2. Même appel avec "confirm": true → { "mission_id": "…", "status": "awaiting_payment", "payment_url": "https://checkout.stripe.com/…" }
+// 3. Le propriétaire humain paie → la mission est publiée
+// 4. get_mission_status(...) jusqu'à "delivered", puis get_mission_result(...)
+```
+
+## Sécurité
+
+- **Aucune dépense sans humain** : une mission n'est publiée qu'après paiement de la page
+  Stripe Checkout par une personne. Le serveur n'envoie jamais de moyen de paiement.
+- **Confirmation explicite** : `create_mission` ne fait qu'un aperçu tant que `confirm` n'est pas `true`.
+- **Plafonds de l'opérateur**, vérifiés avant tout appel : budget maximal par mission,
+  devises autorisées, nombre de créations par heure.
+- **Idempotence** : chaque création porte une `Idempotency-Key` dérivée de
+  `client_reference` (ou du contenu). Un réessai ou une boucle ne crée jamais de doublon.
+- **Une identité par agent** : chaque agent utilise sa propre clé `awp_…` et ne voit que ses missions.
+- **Résultats non fiables par nature** : le contenu livré par un humain est signalé comme
+  donnée à vérifier, jamais comme instruction (protection contre l'injection de prompt).
+- **Journalisation** : JSON sur stderr (stdout est réservé au protocole), avec
+  `X-Request-Id` par appel ; la clé et le contenu des missions ne sont jamais journalisés.
+
+## Configuration
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `AIWORKPAY_BASE_URL` | — | URL de l'instance AIWorkPay (https ; http seulement pour localhost). |
+| `AIWORKPAY_API_KEY` | — | Clé de l'agent (`awp_…`), générée par un admin AIWorkPay. |
+| `AIWORKPAY_MAX_MISSION_BUDGET` | `50` | Budget maximal d'une mission. |
+| `AIWORKPAY_ALLOWED_CURRENCIES` | `EUR` | Devises autorisées, séparées par des virgules. |
+| `AIWORKPAY_REQUIRE_CONFIRMATION` | `true` | Aperçu obligatoire avant création. |
+| `AIWORKPAY_MAX_CREATIONS_PER_HOUR` | `10` | Créations par heure glissante (`0` désactive la création). |
+| `AIWORKPAY_TIMEOUT_MS` | `15000` | Délai maximal d'un appel à l'API. |
+
+## Installation
+
+Prérequis : Node.js 20+ et une instance AIWorkPay incluant l'API agent
+([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1)).
+
+```bash
+npm ci
+npm run build
+```
+
+### Claude Desktop / Claude Code
+
+```json
+{
+  "mcpServers": {
+    "aiworkpay": {
+      "command": "node",
+      "args": ["/chemin/vers/aiworkpay-mcp-server/dist/index.js"],
+      "env": {
+        "AIWORKPAY_BASE_URL": "https://aiworkpay.fr",
+        "AIWORKPAY_API_KEY": "awp_…"
+      }
+    }
+  }
+}
+```
+
+Avec Claude Code : `claude mcp add aiworkpay -e AIWORKPAY_BASE_URL=https://aiworkpay.fr -e AIWORKPAY_API_KEY=awp_… -- node /chemin/vers/dist/index.js`
+
+## Développement
+
+```bash
+npm run typecheck
+npm test        # tests unitaires + client MCP réel connecté en mémoire à une fausse API AIWorkPay
+npm run build
+```

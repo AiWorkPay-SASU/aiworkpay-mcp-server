@@ -1,0 +1,199 @@
+import { describe, expect, it } from 'vitest';
+import { AiworkpayApiError, AiworkpayClient } from '../src/api/client.js';
+import { ConfigError, loadConfig } from '../src/config.js';
+import { idempotencyKeyFor, renderDescription, toCreateRequest, type MissionInput } from '../src/domain/missionInput.js';
+import { missionView, toAgentStatus } from '../src/domain/missionStatus.js';
+import { CreationLimiter } from '../src/safety/creationLimiter.js';
+import { assertSpendAllowed, GuardError } from '../src/safety/spendGuard.js';
+import type { Mission } from '../src/api/types.js';
+
+const future = new Date(Date.now() + 7 * 864e5).toISOString();
+
+const input: MissionInput = {
+  type: 'physical_verification',
+  title: 'Vérifier un commerce',
+  instructions: 'Vérifier que le commerce existe et est ouvert.',
+  location: { city: 'Casablanca', address: '12 rue Example' },
+  deliverables: ['Photo de la façade', 'Horaires'],
+  budget: 15,
+  currency: 'eur',
+  deadline: future,
+  priority: 'high',
+};
+
+describe('config', () => {
+  const base = { AIWORKPAY_BASE_URL: 'https://aiworkpay.fr/', AIWORKPAY_API_KEY: 'awp_x' };
+
+  it('applies safe defaults', () => {
+    expect(loadConfig(base)).toEqual({
+      baseUrl: 'https://aiworkpay.fr',
+      apiKey: 'awp_x',
+      maxMissionBudget: 50,
+      allowedCurrencies: ['EUR'],
+      requireConfirmation: true,
+      maxCreationsPerHour: 10,
+      timeoutMs: 15000,
+    });
+  });
+
+  it('parses overrides', () => {
+    const c = loadConfig({ ...base, AIWORKPAY_ALLOWED_CURRENCIES: 'eur, mad', AIWORKPAY_REQUIRE_CONFIRMATION: 'false' });
+    expect(c.allowedCurrencies).toEqual(['EUR', 'MAD']);
+    expect(c.requireConfirmation).toBe(false);
+  });
+
+  it('refuses plain http except for localhost, and non-agent keys', () => {
+    expect(() => loadConfig({ ...base, AIWORKPAY_BASE_URL: 'http://aiworkpay.fr' })).toThrow(ConfigError);
+    expect(loadConfig({ ...base, AIWORKPAY_BASE_URL: 'http://localhost:3000' }).baseUrl).toBe('http://localhost:3000');
+    expect(() => loadConfig({ ...base, AIWORKPAY_API_KEY: 'sk_live_x' })).toThrow(/awp_/);
+    expect(() => loadConfig({})).toThrow(ConfigError);
+  });
+});
+
+describe('mission input', () => {
+  it('renders type, location and deliverables into the description', () => {
+    const description = renderDescription(input);
+    expect(description).toContain('Type de mission : Vérification physique sur place');
+    expect(description).toContain('- Adresse : 12 rue Example\n- Ville : Casablanca');
+    expect(description).toContain('Livrables attendus :\n- Photo de la façade\n- Horaires');
+    expect(description).not.toContain('Pays');
+  });
+
+  it('builds a checkout request', () => {
+    expect(toCreateRequest(input)).toMatchObject({ currency: 'EUR', priority: 'HIGH', paymentMode: 'checkout', budget: 15 });
+  });
+
+  it('derives a stable, valid idempotency key', () => {
+    const request = toCreateRequest(input);
+    const key = idempotencyKeyFor(input, request);
+    expect(key).toMatch(/^[A-Za-z0-9_.:-]{8,255}$/);
+    expect(idempotencyKeyFor(input, request)).toBe(key);
+    expect(idempotencyKeyFor({ ...input, budget: 16 }, toCreateRequest({ ...input, budget: 16 }))).not.toBe(key);
+    const withRef = { ...input, client_reference: 'shop 42 / é' };
+    expect(idempotencyKeyFor(withRef, request)).toMatch(/^mcp-[a-f0-9]{48}$/);
+    expect(idempotencyKeyFor({ ...withRef, budget: 99 }, request)).toBe(idempotencyKeyFor(withRef, request));
+  });
+});
+
+describe('spend guard', () => {
+  const config = { maxMissionBudget: 20, allowedCurrencies: ['EUR'] };
+  const code = (fn: () => void) => {
+    try {
+      fn();
+    } catch (error) {
+      return (error as GuardError).code;
+    }
+    return 'OK';
+  };
+
+  it('enforces currency, budget cap and deadline', () => {
+    expect(code(() => assertSpendAllowed(input, config))).toBe('OK');
+    expect(code(() => assertSpendAllowed({ ...input, currency: 'MAD' }, config))).toBe('CURRENCY_NOT_ALLOWED');
+    expect(code(() => assertSpendAllowed({ ...input, budget: 20.01 }, config))).toBe('BUDGET_CAP_EXCEEDED');
+    expect(code(() => assertSpendAllowed({ ...input, deadline: '2020-01-01T00:00:00Z' }, config))).toBe('DEADLINE_IN_THE_PAST');
+  });
+});
+
+describe('creation limiter', () => {
+  it('allows N per rolling hour', () => {
+    let now = 0;
+    const limiter = new CreationLimiter(2, () => now);
+    limiter.record('k1');
+    now = 10 * 60_000;
+    limiter.record('k2');
+    expect(limiter.retryAfterSeconds()).toBe(50 * 60);
+    expect(limiter.retryAfterSeconds('k1')).toBe(0);
+    now = 60 * 60_000 + 1;
+    expect(limiter.retryAfterSeconds()).toBe(0);
+  });
+
+  it('0 disables creation', () => {
+    expect(new CreationLimiter(0).retryAfterSeconds()).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe('mission status', () => {
+  const mission: Mission = {
+    id: 'm1',
+    title: 't',
+    description: 'd',
+    budget: '15.5',
+    currency: 'EUR',
+    deadline: '2026-01-01T00:00:00.000Z',
+    priority: 'MEDIUM',
+    status: 'PAYMENT_PENDING',
+    checkoutUrl: 'https://checkout.stripe.com/x',
+    createdAt: '2025-12-01T00:00:00.000Z',
+    updatedAt: '2025-12-01T00:00:00.000Z',
+  };
+
+  it('maps statuses', () => {
+    expect(toAgentStatus('PUBLISHED')).toBe('open');
+    expect(toAgentStatus('DELIVERED')).toBe('delivered');
+  });
+
+  it('exposes the payment url only while awaiting payment', () => {
+    const now = new Date('2025-12-15T00:00:00Z');
+    expect(missionView(mission, now)).toMatchObject({ status: 'awaiting_payment', budget: 15.5, payment_url: 'https://checkout.stripe.com/x' });
+    expect(missionView({ ...mission, status: 'PUBLISHED' }, now).payment_url).toBeNull();
+  });
+
+  it('flags a past deadline only for unfinished missions', () => {
+    const later = new Date('2026-02-01T00:00:00Z');
+    expect(missionView({ ...mission, status: 'PUBLISHED' }, later).is_past_deadline).toBe(true);
+    expect(missionView({ ...mission, status: 'COMPLETED' }, later).is_past_deadline).toBe(false);
+  });
+});
+
+describe('api client', () => {
+  it('sends the key, a request id and the idempotency key', async () => {
+    let seen: Headers | undefined;
+    const client = new AiworkpayClient({
+      baseUrl: 'https://api.test',
+      apiKey: 'awp_secret',
+      timeoutMs: 1000,
+      fetch: async (_url, init) => {
+        seen = new Headers(init?.headers);
+        return new Response(JSON.stringify({ mission: { id: 'm1' }, payment: null }), { status: 201 });
+      },
+    });
+    const result = await client.createMission(toCreateRequest(input), 'mcp-abcdefgh');
+    expect(result.replayed).toBe(false);
+    expect(seen?.get('authorization')).toBe('Bearer awp_secret');
+    expect(seen?.get('idempotency-key')).toBe('mcp-abcdefgh');
+    expect(seen?.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('turns API errors into typed errors', async () => {
+    const client = new AiworkpayClient({
+      baseUrl: 'https://api.test',
+      apiKey: 'awp_x',
+      timeoutMs: 1000,
+      fetch: async () => new Response(JSON.stringify({ error: 'Mission introuvable', code: 'MISSION_NOT_FOUND' }), { status: 404 }),
+    });
+    await expect(client.getMission('x')).rejects.toMatchObject({ code: 'MISSION_NOT_FOUND', status: 404 });
+  });
+
+  it('falls back to a status-based code and handles timeouts', async () => {
+    const plain = new AiworkpayClient({
+      baseUrl: 'https://api.test',
+      apiKey: 'awp_x',
+      timeoutMs: 1000,
+      fetch: async () => new Response('<html>', { status: 502 }),
+    });
+    await expect(plain.getMission('x')).rejects.toMatchObject({ code: 'API_ERROR', status: 502 });
+
+    const slow = new AiworkpayClient({
+      baseUrl: 'https://api.test',
+      apiKey: 'awp_x',
+      timeoutMs: 20,
+      fetch: (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        }),
+    });
+    const error = await slow.getMission('x').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AiworkpayApiError);
+    expect(error).toMatchObject({ code: 'TIMEOUT', status: 0 });
+  });
+});

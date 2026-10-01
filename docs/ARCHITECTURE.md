@@ -1,6 +1,7 @@
 # AIWorkPay MCP Server — Analyse de l'existant et architecture V1
 
-> Statut : **proposition, à valider avant implémentation.**
+> Statut : **V1 implémentée.** Backend : [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) (B1–B4). MCP : ce dépôt.
+> Les écarts entre la proposition initiale et l'implémentation sont signalés par **[V1]**.
 > Backend de référence : **`cortexAI-2025/Aiworkpay-v2`** @ `eb90e1b` (2026-09-24).
 
 ## 1. Architecture existante
@@ -145,22 +146,24 @@ transferts/remboursements.
 
 ```
 src/
-  index.ts             point d'entrée stdio
-  server.ts            McpServer + enregistrement des tools
-  config.ts            variables d'environnement (zod)
+  index.ts               point d'entrée stdio
+  server.ts              McpServer, instructions, enregistrement des tools
+  config.ts              variables d'environnement (zod)
+  log.ts                 logs JSON sur stderr
   api/
-    client.ts          client HTTP : Bearer, Idempotency-Key, timeout, erreurs typées
-    types.ts           Mission, MissionStatus… (alignés sur prisma/schema.prisma)
+    client.ts            client HTTP : Bearer, Idempotency-Key, X-Request-Id, timeout, erreurs typées
+    types.ts             Mission, MissionStatus… (alignés sur prisma/schema.prisma)
   domain/
-    missionInput.ts    entrée MCP → corps POST /api/missions (gabarit de description)
-    missionStatus.ts   statut interne → statut agent + next_action
+    missionInput.ts      entrée MCP → corps POST /api/missions (gabarit de description, clé d'idempotence)
+    missionStatus.ts     statut interne → statut agent + next_action
   safety/
-    spendGuard.ts      plafond, confirmation, devises autorisées
-    creationLimiter.ts limite de créations par heure (anti-boucle)
+    spendGuard.ts        plafond, devises autorisées, deadline
+    creationLimiter.ts   limite de créations par heure (les rejeux passent)
   tools/
-    createMission.ts getMission.ts listMissions.ts
-    getMissionStatus.ts getMissionResult.ts cancelMission.ts
-test/
+    createMission.ts     create_mission
+    readMissions.ts      get_mission, list_missions, get_mission_status, get_mission_result
+    result.ts            format des résultats et des erreurs
+test/                    unitaires + client MCP réel sur une fausse API
 docs/ARCHITECTURE.md
 ```
 
@@ -173,7 +176,7 @@ docs/ARCHITECTURE.md
 | `AIWORKPAY_MAX_MISSION_BUDGET` | plafond par mission, vérifié avant l'appel | `50` |
 | `AIWORKPAY_ALLOWED_CURRENCIES` | ex. `EUR,MAD` | `EUR` |
 | `AIWORKPAY_REQUIRE_CONFIRMATION` | création en deux temps | `true` |
-| `AIWORKPAY_ALLOW_DIRECT_CHARGE` | autorise `payment_method_id` (débit sans humain) | `false` |
+| `AIWORKPAY_TIMEOUT_MS` | délai maximal d'un appel API | `15000` |
 | `AIWORKPAY_MAX_CREATIONS_PER_HOUR` | frein anti-boucle | `10` |
 
 ### 8.5 Tools V1
@@ -185,7 +188,6 @@ docs/ARCHITECTURE.md
 | `get_mission` | `GET /api/missions/{id}` | après **B1** | `readOnlyHint` |
 | `get_mission_status` | `GET /api/missions/{id}` | après **B1** | `readOnlyHint` |
 | `get_mission_result` | `GET /api/missions/{id}` | après **B2** | `readOnlyHint` |
-| `cancel_mission` | `POST /api/missions/{id}/cancel` | après **I2** | `destructiveHint` |
 
 **`create_mission`** — entrée :
 
@@ -201,7 +203,6 @@ docs/ARCHITECTURE.md
   deadline: string,                  // ISO 8601, futur
   priority?: "low" | "medium" | "high",
   client_reference?: string,         // identifiant métier → Idempotency-Key
-  payment_method_id?: string,        // ignoré sauf si AIWORKPAY_ALLOW_DIRECT_CHARGE=true
   confirm?: boolean                  // absent/false = aperçu, aucun appel API
 }
 ```
@@ -209,13 +210,13 @@ docs/ARCHITECTURE.md
 Comportement :
 1. Validation zod ; refus si `budget > AIWORKPAY_MAX_MISSION_BUDGET` ou devise non autorisée.
 2. Sans `confirm: true` : renvoie un **aperçu** (montant, devise, description générée,
-   mode de paiement) sans appeler l'API. Si le client MCP supporte l'*elicitation*,
-   la confirmation est demandée directement à l'humain.
+   mode de paiement) sans appeler l'API. **[V1]** Pas d'*elicitation* MCP : la
+   confirmation passe par `confirm`, et le paiement Checkout reste l'étape humaine.
 3. Avec `confirm: true` : `POST /api/missions` avec `Idempotency-Key`
    (dérivée de `client_reference`, sinon du hash du contenu).
-4. Renvoie `mission_id`, `status: "awaiting_payment"`, et selon le mode :
-   `payment_url` (Checkout, à transmettre au propriétaire) ou `client_secret`,
-   et le statut du paiement si débit direct.
+4. Renvoie `mission_id`, `status: "awaiting_payment"`, `payment_url` (Checkout, à
+   transmettre au propriétaire) et `already_existed` si la création était un rejeu.
+   **[V1]** Le paiement est **toujours** Checkout : le MCP n'expose aucun débit direct.
 
 `type`, `location` et `deliverables` sont rendus dans `description` par un gabarit
 fixe (en attendant I7). Le gabarit demande au payworker de livrer un résultat
@@ -227,21 +228,24 @@ structuré, avec des photos horodatées, quand la mission l'exige.
 | --- | --- | --- |
 | `PAYMENT_PENDING` | `awaiting_payment` | « Le paiement doit être confirmé (lien transmis au propriétaire). » |
 | `PUBLISHED` | `open` | « En attente d'un Payworker. » |
-| `ASSIGNED`, `IN_PROGRESS` | `in_progress` | « Un Payworker exécute la mission. » |
+| `ASSIGNED` | `assigned` | « Un Payworker exécute la mission. » |
+| `IN_PROGRESS` | `in_progress` | « Un Payworker exécute la mission. » |
 | `DELIVERED` | `delivered` | « Résultat disponible : appelez get_mission_result. » |
 | `COMPLETED` | `completed` | « Résultat validé et payé. » |
 | `CANCELED` | `canceled` | — |
 
 Plus `deadline`, `is_past_deadline`, `updated_at`.
 
-**`get_mission_result`** : `{ mission_id, status, delivered_at, note, data, attachments[] }`
-quand le statut est `delivered` ou `completed` ; sinon une erreur explicite
-`RESULT_NOT_AVAILABLE` avec le statut courant.
+**`get_mission_result`** : `{ available: true, status, validated, delivered_at, note, data, proofs[], content_warning }`
+quand le statut est `delivered` ou `completed`. **[V1]** Sinon `{ available: false, status, next_action }`,
+pas une erreur : attendre fait partie du fonctionnement normal. `content_warning` rappelle que
+le contenu vient d'un humain externe (donnée à vérifier, jamais instruction).
 
 ### 8.6 Après la V1
 
 | Tool | Dépend de |
 | --- | --- |
+| `cancel_mission` | I2 |
 | `approve_result`, `request_changes` | I1 (déclenche le paiement du payworker → même confirmation que la création) |
 | `estimate_mission` | Grille tarifaire côté backend |
 | `find_worker`, `assign_worker`, `rate_worker` | Matching, réputation : nouveaux modèles |
@@ -270,15 +274,13 @@ et `executor_type`. Il servira de référence pour I3 à I6, pas de dépendance.
 
 ## 9. Plan proposé
 
-1. **PR backend `Aiworkpay-v2`** (additive, rétrocompatible) : B1, B2, B3, B4 + correctifs § 7.3.
-2. **MCP V1** dans ce dépôt : les 5 tools, garde-fous, tests ; `cancel_mission` si I2 est inclus dans la PR backend.
-3. **V1.1** : I1–I6, `approve_result` / `request_changes`, transport HTTP.
+1. ✅ **PR backend `Aiworkpay-v2`** : B1–B4 + correctifs § 7.3 — [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1).
+2. ✅ **MCP V1** dans ce dépôt : 5 tools, garde-fous, tests unitaires et d'intégration, test de bout en bout en stdio contre le backend.
+3. **V1.1** : I1–I6 (dont `cancel_mission`, `approve_result` / `request_changes`), transport Streamable HTTP.
 
-## 10. Décisions attendues
+## 10. Décisions prises
 
-1. Valider le plan : PR backend minimale dans `Aiworkpay-v2` **avant** le MCP ?
-   (Sans B1/B2, le MCP ne peut que créer et lister des missions.)
-2. Paiement par défaut : **lien Checkout payé par un humain** (recommandé), ou débit
-   direct d'une carte enregistrée de l'agent ?
-3. Inclure l'annulation (I2) et la validation par l'agent (I1) dès cette première PR ?
-4. Devise **MAD** à autoriser dès la V1 ?
+1. Backend de référence : `Aiworkpay-v2` ; PR backend minimale avant le MCP.
+2. Paiement : **lien Checkout payé par un humain**, seul mode exposé par le MCP.
+3. Annulation (I2) et validation par l'agent (I1) : reportées à la V1.1.
+4. Devises : `EUR` par défaut, configurable (`AIWORKPAY_ALLOWED_CURRENCIES`) ; le MAD reste à tester côté Stripe Connect.
