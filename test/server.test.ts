@@ -75,7 +75,9 @@ describe('AIWorkPay MCP server', () => {
       'get_mission_result',
       'get_mission_status',
       'get_proof_file',
+      'get_workforce_handoff',
       'list_missions',
+      'prepare_workforce_handoff',
       'request_changes',
     ]);
     expect(tools.find((t) => t.name === 'approve_result')?.annotations?.destructiveHint).toBe(true);
@@ -404,4 +406,5 @@ describe('AIWorkPay MCP server', () => {
     });
   });
 });
+
 

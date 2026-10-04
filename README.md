@@ -177,3 +177,12 @@ to the MCP service's public hostname and its healthcheck hostname if different.
 Keep HTTPS at the proxy. No shared `AIWORKPAY_API_KEY` is needed in HTTP mode:
 each client sends its own key. `/healthz` is liveness only; application readiness
 is checked at the application's `/api/health`.
+
+
+## Ruflo + AIWorkPay workforce
+
+Intégration modulaire via deux serveurs MCP accessibles au même agent hôte.
+`prepare_workforce_handoff` prépare un brief avec une référence stable issue des
+identifiants swarm/tâche/sous-tâche ; `get_workforce_handoff` lit son état et son
+résultat avant reprise. Aucun paiement ni orchestration Ruflo supplémentaire dans
+ces outils. Configuration et procédure : [docs/RUFLO.md](docs/RUFLO.md).
