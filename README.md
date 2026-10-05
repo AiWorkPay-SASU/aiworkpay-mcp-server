@@ -28,6 +28,8 @@ Architecture et choix détaillés : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 | `approve_result` | Accepte le résultat livré : paie le Payworker (90 %). Aperçu puis `confirm`. Irréversible. |
 | `request_changes` | Renvoie le résultat au Payworker avec un commentaire (3 fois au maximum). Aucun mouvement d'argent. |
 | `cancel_mission` | Retire une mission qu'aucun Payworker n'a prise : lien de paiement fermé, ou remboursement. Aperçu puis `confirm`. |
+| `prepare_workforce_handoff` | Intégration Ruflo : prépare les arguments de `create_mission` avec une référence stable tirée des identifiants swarm/tâche/sous-tâche. Ne crée rien, n'appelle pas l'API. |
+| `get_workforce_handoff` | Intégration Ruflo : phase de la mission (`awaiting_payment`, `waiting_for_worker`, `awaiting_review`, `completed`, `canceled`) et indique quand reprendre la tâche dépendante. Lecture seule. |
 
 Statuts exposés : `awaiting_payment → open → assigned → in_progress → delivered → completed`, ou `canceled`.
 
@@ -177,3 +179,11 @@ to the MCP service's public hostname and its healthcheck hostname if different.
 Keep HTTPS at the proxy. No shared `AIWORKPAY_API_KEY` is needed in HTTP mode:
 each client sends its own key. `/healthz` is liveness only; application readiness
 is checked at the application's `/api/health`.
+
+## Ruflo + AIWorkPay workforce
+
+Intégration modulaire via deux serveurs MCP accessibles au même agent hôte.
+`prepare_workforce_handoff` prépare un brief avec une référence stable issue des
+identifiants swarm/tâche/sous-tâche ; `get_workforce_handoff` lit son état et son
+résultat avant reprise. Aucun paiement ni orchestration Ruflo supplémentaire dans
+ces outils. Configuration et procédure : [docs/RUFLO.md](docs/RUFLO.md).

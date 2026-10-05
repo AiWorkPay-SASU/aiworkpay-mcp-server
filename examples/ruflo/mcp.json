@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ruflo": {
+      "command": "npx",
+      "args": ["-y", "ruflo@3.51.1", "mcp", "start"]
+    },
+    "aiworkpay": {
+      "type": "http",
+      "url": "https://mcp.aiworkpay.fr/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AIWORKPAY_API_KEY}"
+      }
+    }
+  }
+}

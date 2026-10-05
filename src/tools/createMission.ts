@@ -9,7 +9,7 @@ import type { CreationLimiter } from '../safety/creationLimiter.js';
 import { assertSpendAllowed, GuardError } from '../safety/spendGuard.js';
 import { ok, runTool } from './result.js';
 
-const inputSchema = {
+export const createMissionInputSchema = {
   type: z.enum(MISSION_TYPES).describe('Kind of task delegated to a human.'),
   title: z.string().trim().min(3).max(200).describe('Short title shown on the marketplace.'),
   instructions: z
@@ -74,7 +74,7 @@ export function registerCreateMission(
         'Creating the mission spends nothing by itself: it returns payment_url, a Stripe payment page that your human owner must pay. ' +
         'The mission is published to Payworkers only once paid. Then poll get_mission_status and read get_mission_result. ' +
         `Limits on this server: budget at most ${config.maxMissionBudget} per mission, currencies ${config.allowedCurrencies.join(', ')}.`,
-      inputSchema,
+      inputSchema: createMissionInputSchema,
       annotations: {
         title: 'Create mission',
         readOnlyHint: false,
@@ -139,4 +139,3 @@ export function registerCreateMission(
       })
   );
 }
-

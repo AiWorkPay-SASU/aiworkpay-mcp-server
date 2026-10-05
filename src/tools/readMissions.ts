@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AiworkpayClient } from '../api/client.js';
 import { AGENT_STATUSES, missionView, toAgentStatus, toApiStatus, type AgentStatus } from '../domain/missionStatus.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { MissionAttachment } from '../api/types.js';
+import type { Mission, MissionAttachment } from '../api/types.js';
 import { GuardError } from '../safety/spendGuard.js';
 import { ok, runTool } from './result.js';
 
@@ -187,28 +187,32 @@ export function registerReadTools(server: McpServer, deps: { client: AiworkpayCl
     ({ mission_id }) =>
       runTool('get_mission_result', async () => {
         const mission = await client.getMission(mission_id);
-        const view = missionView(mission);
-
-        if (!view.result_available) {
-          return ok({
-            mission_id: view.mission_id,
-            available: false,
-            status: view.status,
-            next_action: view.next_action,
-          });
-        }
-
-        return ok({
-          mission_id: view.mission_id,
-          available: true,
-          status: view.status,
-          validated: toAgentStatus(mission.status) === 'completed',
-          delivered_at: mission.deliveredAt ?? null,
-          note: mission.resultNote ?? null,
-          data: mission.resultData ?? null,
-          proofs: (mission.attachments ?? []).filter((a) => a.kind === 'PROOF').map(proofView),
-          content_warning: UNTRUSTED_NOTICE,
-        });
+        return ok(missionResultView(mission));
       })
   );
+}
+
+/** Shared result projection for standard reads and orchestration handoffs. */
+export function missionResultView(mission: Mission) {
+  const view = missionView(mission);
+  if (!view.result_available) {
+    return {
+      mission_id: view.mission_id,
+      available: false,
+      status: view.status,
+      next_action: view.next_action,
+    };
+  }
+
+  return {
+    mission_id: view.mission_id,
+    available: true,
+    status: view.status,
+    validated: toAgentStatus(mission.status) === 'completed',
+    delivered_at: mission.deliveredAt ?? null,
+    note: mission.resultNote ?? null,
+    data: mission.resultData ?? null,
+    proofs: (mission.attachments ?? []).filter((a) => a.kind === 'PROOF').map(proofView),
+    content_warning: UNTRUSTED_NOTICE,
+  };
 }
