@@ -31,6 +31,15 @@ aucune copie de ses agents, aucune orchestration LLM dans ce serveur.
 ```
 
 La version Ruflo est fixée à 3.51.1, correspondant au manifeste amont examiné.
+
+**Sécurité de la commande npx.** `npx -y` télécharge puis exécute le paquet sans
+confirmation, avec les droits de l'hôte. Avant le premier lancement :
+- vérifier que le paquet `ruflo` sur npm est bien publié par le dépôt
+  `ruvnet/ruflo` (`npm view ruflo@3.51.1 repository maintainers dist.integrity`) ;
+- garder la version figée : ne jamais remplacer par `ruflo` ou `ruflo@latest` ;
+- pour un environnement sensible, préférer une installation verrouillée
+  (`npm install --save-exact ruflo@3.51.1` dans un dossier dédié, avec
+  `package-lock.json`) et pointer `command` vers le binaire installé.
 Le premier lancement de npx nécessite accès au registre npm. Utiliser
 `listTools` sur chaque serveur : les préfixes et schémas Ruflo peuvent varier
 selon le mode plugin ou CLI. Ne pas inventer un appel de mémoire ou de tâche.

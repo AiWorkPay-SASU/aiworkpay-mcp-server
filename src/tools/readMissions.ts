@@ -192,7 +192,6 @@ export function registerReadTools(server: McpServer, deps: { client: AiworkpayCl
   );
 }
 
-
 /** Shared result projection for standard reads and orchestration handoffs. */
 export function missionResultView(mission: Mission) {
   const view = missionView(mission);

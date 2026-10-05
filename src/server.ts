@@ -48,4 +48,3 @@ export function createServer({ config, apiKey, client, limiter }: ServerDeps): M
 
   return server;
 }
-

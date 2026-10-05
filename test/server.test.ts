@@ -406,5 +406,3 @@ describe('AIWorkPay MCP server', () => {
     });
   });
 });
-
-
