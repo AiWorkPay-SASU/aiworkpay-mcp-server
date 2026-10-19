@@ -10,6 +10,11 @@ export class CreationLimiter {
     const oldest = Math.min(...Array.from(this.entries.values(), (e) => e.at));
     return Math.max(1, Math.ceil((oldest + HOUR_MS - this.now()) / 1000));
   }
+  /** Creations still allowed in the rolling hour. */
+  available(): number {
+    this.prune();
+    return Math.max(0, this.maxPerHour - this.entries.size);
+  }
   reserve(key: string): number {
     const delay = this.retryAfterSeconds(key);
     if (delay === 0 && !this.entries.has(key)) this.entries.set(key, { at: this.now(), pending: true });

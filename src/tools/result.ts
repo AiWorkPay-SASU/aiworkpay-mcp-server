@@ -26,6 +26,8 @@ const HINTS: Record<string, string> = {
   BUDGET_LIMIT_EXCEEDED: 'The budget exceeds the per-mission cap of your API key. Lower it or ask your owner to raise the cap.',
   MONTHLY_BUDGET_EXCEEDED: 'The monthly budget of your API key is used up. Wait for next month or ask your owner to raise it.',
   RATE_LIMITED: 'Too many requests. Wait retry_after_seconds before trying again.',
+  PAYMENT_PROVIDER_UNAVAILABLE: 'The payment provider is unavailable and nothing was charged. Retry in a minute with the same client_reference: the same request never creates a duplicate.',
+  NOT_FOUND: 'This route does not exist: the AIWorkPay instance may predate this tool. Ask your operator to update it.',
 };
 
 const RETRYABLE = new Set(['TIMEOUT', 'NETWORK_ERROR', 'PAYMENT_PROVIDER_UNAVAILABLE', 'RATE_LIMITED', 'INTERNAL_ERROR']);

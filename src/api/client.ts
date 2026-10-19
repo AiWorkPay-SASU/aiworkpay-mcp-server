@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { missionSchema, createSchema, cancelSchema, approveSchema, changesSchema } from './schemas.js';
+import { missionSchema, createSchema, cancelSchema, approveSchema, changesSchema, accountSchema, transactionsSchema } from './schemas.js';
 import { randomUUID } from 'node:crypto';
 import { log } from '../log.js';
 import type {
+  AgentAccount,
   ApproveMissionResponse,
   CancelMissionResponse,
   CreateMissionRequest,
@@ -11,6 +12,7 @@ import type {
   MissionStatus,
   ProofFile,
   RequestChangesResponse,
+  TransactionsResponse,
 } from './types.js';
 
 /**
@@ -93,6 +95,23 @@ export class AiworkpayClient {
       `/api/missions/${encodeURIComponent(id)}/request-changes`,
       { body: { feedback }, schema: changesSchema }
     );
+    return data;
+  }
+
+  /** The key's own limits, budget used this month, payments and missions by status. */
+  async getAccount(): Promise<AgentAccount> {
+    const { data } = await this.request<AgentAccount>('GET', '/api/account', { schema: accountSchema });
+    return data;
+  }
+
+  /** Payments booked on the key, newest first. */
+  async listTransactions(params: { missionId?: string; limit?: number; skip?: number } = {}): Promise<TransactionsResponse> {
+    const query = new URLSearchParams();
+    if (params.missionId) query.set('missionId', params.missionId);
+    if (params.limit !== undefined) query.set('limit', String(params.limit));
+    if (params.skip !== undefined) query.set('skip', String(params.skip));
+    const suffix = query.size > 0 ? `?${query}` : '';
+    const { data } = await this.request<TransactionsResponse>('GET', `/api/transactions${suffix}`, { schema: transactionsSchema });
     return data;
   }
 

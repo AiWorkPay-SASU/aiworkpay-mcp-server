@@ -1,6 +1,6 @@
 # AIWorkPay MCP Server — Analyse de l'existant et architecture V1
 
-> Statut : **V1, V1.1, V1.2 et fichiers de preuve implémentés** (V1.1 : I1, I2 ; V1.2 : I3–I6 et transport HTTP). Backend : [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) (B1–B4). MCP : ce dépôt.
+> Statut : **V1, V1.1, V1.2, fichiers de preuve et V1.3 implémentés** (V1.1 : I1, I2 ; V1.2 : I3–I6 et transport HTTP ; V1.3 : outils `get_account` et `list_transactions`). Backend : [Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) (B1–B4). MCP : ce dépôt.
 > Les écarts entre la proposition initiale et l'implémentation sont signalés par **[V1]**.
 > Backend de référence : **`cortexAI-2025/Aiworkpay-v2`** @ `eb90e1b` (2026-09-24).
 
@@ -245,6 +245,7 @@ le contenu vient d'un humain externe (donnée à vérifier, jamais instruction).
 
 | Tool | Dépend de |
 | --- | --- |
+| ✅ `get_account`, `list_transactions` | V1.3 — routes `GET /api/account` et `GET /api/transactions` (clé API, `missions:read`) ; paiements rattachés à la clé (`Transaction.apiKeyId`) |
 | ✅ `cancel_mission` | I2 — V1.1, aperçu puis `confirm` |
 | ✅ `approve_result`, `request_changes` | I1 — V1.1 ; `approve_result` paie le Payworker → aperçu puis `confirm` |
 | `estimate_mission` | Grille tarifaire côté backend |
@@ -280,9 +281,13 @@ et `executor_type`. Il servira de référence pour I3 à I6, pas de dépendance.
 4. ✅ **V1.2** : I3 (clés hachées, scopes `missions:read|write|approve`, expiration, dernière utilisation), I4 (plafond par mission et budget mensuel par clé, vérifiés atomiquement), I5 (limites de débit en base : requêtes et créations par clé, échecs d'authentification par IP), I6 (codes stables + `hint` côté MCP), transport Streamable HTTP sans état (clé par requête, contrôle `Host`/`Origin`, limite de créations par agent).
 5. ✅ **Fichiers de preuve** : envoi par le Payworker (JPEG, PNG, WebP, HEIC, PDF, type vérifié sur le contenu, 10 Mo, 20 par mission), analyse antivirus ClamAV obligatoire avant stockage (refus si menace ou antivirus indisponible), stockage privé S3-compatible ou local, téléchargement contrôlé (agent propriétaire après livraison, Payworker assigné, admin) ; tool MCP `get_proof_file` (photos rendues comme images, PDF comme ressources).
 
+6. ✅ **V1.3** : `get_account` (permissions, plafonds, budget du mois, payé / remboursé, missions par statut, plafond effectif d'une création) et `list_transactions`, lecture seule ; routes backend `GET /api/account` et `GET /api/transactions` ; `PAYMENT_PROVIDER_UNAVAILABLE` (502) renvoyé aussi quand Stripe est injoignable à la création ; indication (`hint`) pour ce code et pour une instance sans ces routes.
+
 ## 10. Décisions prises
 
 1. Backend de référence : `Aiworkpay-v2` ; PR backend minimale avant le MCP.
 2. Paiement : **lien Checkout payé par un humain**, seul mode exposé par le MCP.
 3. Annulation (I2) et validation par l'agent (I1) : livrées en V1.1. L'agent ne peut annuler qu'avant l'engagement d'un Payworker ; ensuite, seule l'équipe AIWorkPay peut le faire.
 4. Devises : `EUR` par défaut, configurable (`AIWORKPAY_ALLOWED_CURRENCIES`) ; le MAD reste à tester côté Stripe Connect.
+5. Les paiements d'un agent sont rattachés à **sa clé** (`Transaction.apiKeyId`), pas à l'administrateur qui l'a créée : `get_account` et `list_transactions` s'appuient sur cette identité technique.
+6. **Webhooks sortants non exposés par le MCP.** Ils notifient le serveur de l'agent (`PUT /api/webhook`, signature HMAC, reprises) ; leur secret ne doit pas transiter par le contexte d'un modèle. Le MCP reste en interrogation (`get_mission_status`).

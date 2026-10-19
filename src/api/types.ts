@@ -100,3 +100,47 @@ export interface CreateMissionResponse {
   mission: Mission;
   payment: CheckoutPayment | { mode: 'payment_intent' } | null;
 }
+
+/** GET /api/account: the calling key's own limits, budget used and missions. */
+export interface AgentAccount {
+  key: {
+    id: string;
+    label: string;
+    prefix: string;
+    scopes: string[];
+    active: boolean;
+    expiresAt: string | null;
+    lastUsedAt: string | null;
+    createdAt: string;
+  };
+  limits: { maxMissionBudget: number | null; monthlyBudget: number | null };
+  usage: {
+    monthStart: string;
+    committedThisMonth: number;
+    remainingThisMonth: number | null;
+    totalPaid: number;
+    totalRefunded: number;
+    netPaid: number;
+  };
+  missions: { total: number; byStatus: Partial<Record<MissionStatus, number>> };
+  webhook: { configured: boolean };
+}
+
+/** A payment booked on the calling key (GET /api/transactions). */
+export interface AgentTransaction {
+  id: string;
+  type: 'AGENT_PAYMENT';
+  status: 'PENDING' | 'SUCCEEDED' | 'FAILED';
+  amount: number;
+  currency: string;
+  missionId: string | null;
+  missionStatus: MissionStatus | null;
+  /** The mission was canceled, so the payment was given back. */
+  refunded: boolean;
+  createdAt: string;
+}
+
+export interface TransactionsResponse {
+  total: number;
+  transactions: AgentTransaction[];
+}

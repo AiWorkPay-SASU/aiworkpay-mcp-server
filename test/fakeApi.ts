@@ -10,6 +10,11 @@ export class FakeAiworkpayApi {
   private seq = 0;
   /** Uploaded proof contents, by attachment id. */
   readonly files = new Map<string, { content: Buffer; contentType: string }>();
+  /** Payments booked on a key (what the agent paid for its missions). */
+  readonly payments: { id: string; missionId: string; amount: number; currency: string; createdAt: string; apiKey: string }[] = [];
+  /** Caps and permissions the API reports for the calling key. */
+  limits: { maxMissionBudget: number | null; monthlyBudget: number | null } = { maxMissionBudget: 100, monthlyBudget: 300 };
+  scopes = ['missions:read', 'missions:write', 'missions:approve'];
   /** Next response to force, e.g. a 502, consumed once. */
   failNext?: { status: number; body: unknown; headers?: Record<string, string> };
 
@@ -45,6 +50,9 @@ export class FakeAiworkpayApi {
         headers: { 'content-type': file.contentType, 'content-length': String(file.content.length) },
       });
     }
+
+    if (url.pathname === '/api/account' && method === 'GET') return this.account(key);
+    if (url.pathname === '/api/transactions' && method === 'GET') return this.transactions(key, url.searchParams);
 
     const action = url.pathname.match(/^\/api\/missions\/([^/]+)\/(cancel|approve|request-changes)$/);
     if (action && method === 'POST') return this.act(key, decodeURIComponent(action[1]!), action[2]!, body);
@@ -142,6 +150,49 @@ export class FakeAiworkpayApi {
     if ((mission.revisionCount ?? 0) >= 3) return json(409, { error: 'limite', code: 'REVISION_LIMIT_REACHED' });
     this.advance(id, { status: 'IN_PROGRESS', revisionFeedback: body?.feedback, revisionCount: (mission.revisionCount ?? 0) + 1 });
     return json(200, { mission: strip(mission), revisionsLeft: 3 - (mission.revisionCount ?? 0) });
+  }
+
+  /** The agent's human owner pays the Checkout page: the mission is published and the payment booked. */
+  pay(id: string): void {
+    const mission = this.missions.get(id);
+    if (!mission) throw new Error(`unknown mission ${id}`);
+    this.advance(id, { status: 'PUBLISHED' });
+    this.payments.push({ id: `txn_${this.payments.length + 1}`, missionId: id, amount: Number(mission.budget), currency: mission.currency, createdAt: new Date().toISOString(), apiKey: mission.apiKey });
+  }
+
+  private account(key: string): Response {
+    const missions = [...this.missions.values()].filter((m) => m.apiKey === key);
+    const committed = missions.filter((m) => m.status !== 'CANCELED').reduce((sum, m) => sum + Number(m.budget), 0);
+    const paid = this.payments.filter((p) => p.apiKey === key);
+    const refunded = paid.filter((p) => this.missions.get(p.missionId)?.status === 'CANCELED').reduce((sum, p) => sum + p.amount, 0);
+    const totalPaid = paid.reduce((sum, p) => sum + p.amount, 0);
+    const byStatus: Record<string, number> = {};
+    for (const m of missions) byStatus[m.status] = (byStatus[m.status] ?? 0) + 1;
+    const month = new Date(); month.setUTCDate(1); month.setUTCHours(0, 0, 0, 0);
+    return json(200, {
+      key: { id: 'key_1', label: 'Agent test', prefix: key.slice(0, 12), scopes: this.scopes, active: true, expiresAt: null, lastUsedAt: null, createdAt: month.toISOString() },
+      limits: this.limits,
+      usage: {
+        monthStart: month.toISOString(), committedThisMonth: committed,
+        remainingThisMonth: this.limits.monthlyBudget === null ? null : Math.max(0, this.limits.monthlyBudget - committed),
+        totalPaid, totalRefunded: refunded, netPaid: totalPaid - refunded,
+      },
+      missions: { total: missions.length, byStatus },
+      webhook: { configured: false },
+    });
+  }
+
+  private transactions(key: string, params: URLSearchParams): Response {
+    const limit = Number(params.get('limit') ?? 50), skip = Number(params.get('skip') ?? 0), missionId = params.get('missionId');
+    const rows = this.payments.filter((p) => p.apiKey === key && (!missionId || p.missionId === missionId)).reverse();
+    return json(200, {
+      total: rows.length,
+      transactions: rows.slice(skip, skip + limit).map((p) => {
+        const status = this.missions.get(p.missionId)?.status ?? null;
+        return { id: p.id, type: 'AGENT_PAYMENT', status: 'SUCCEEDED', amount: p.amount, currency: p.currency, missionId: p.missionId,
+          missionStatus: status, refunded: status === 'CANCELED', createdAt: p.createdAt };
+      }),
+    });
   }
 
   /** Simulate the Payworker's side: payment, acceptance, delivery. */
