@@ -71,12 +71,14 @@ describe('AIWorkPay MCP server', () => {
       'approve_result',
       'cancel_mission',
       'create_mission',
+      'get_account',
       'get_mission',
       'get_mission_result',
       'get_mission_status',
       'get_proof_file',
       'get_workforce_handoff',
       'list_missions',
+      'list_transactions',
       'prepare_workforce_handoff',
       'request_changes',
     ]);
@@ -84,6 +86,7 @@ describe('AIWorkPay MCP server', () => {
     expect(tools.find((t) => t.name === 'get_mission_result')?.annotations?.readOnlyHint).toBe(true);
     expect(tools.find((t) => t.name === 'create_mission')?.annotations?.readOnlyHint).toBe(false);
     expect(client.getInstructions()).toContain('payment_url');
+    expect(client.getInstructions()).toContain('get_account');
   });
 
   it('previews without calling the API, then creates on confirm', async () => {

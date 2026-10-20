@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "fr.aiworkpay/mcp-server",
+  "title": "AIWorkPay MCP Server",
+  "description": "Delegate real-world tasks to human workers: order, track and review missions with an API key.",
+  "version": "0.7.0",
+  "websiteUrl": "https://aiworkpay.fr",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.aiworkpay.fr/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Your AIWorkPay agent API key, sent as a Bearer token (Bearer awp_...). Keys are issued by an AIWorkPay administrator, with their own permissions and spending caps.",
+          "value": "Bearer {api_key}",
+          "isRequired": true,
+          "isSecret": true,
+          "variables": {
+            "api_key": {
+              "description": "AIWorkPay agent API key (starts with awp_).",
+              "isRequired": true,
+              "isSecret": true
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

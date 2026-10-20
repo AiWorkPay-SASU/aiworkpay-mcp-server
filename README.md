@@ -24,6 +24,8 @@ Architecture et choix détaillés : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 | `list_missions` | Missions de l'agent, filtrables par statut. |
 | `get_mission_status` | Où en est la mission, et quoi faire ensuite (`next_action`). |
 | `get_mission_result` | Compte rendu, données structurées et liste des preuves livrés par le Payworker. |
+| `get_account` | Votre propre compte : permissions de la clé, plafonds, budget dépensé et restant ce mois-ci, payé / remboursé, missions par statut, et **`effective_max_budget`** (la plus grande mission que vous pouvez créer maintenant : le plus bas des plafonds applicables). À consulter avant une commande importante. |
+| `list_transactions` | Vos paiements, du plus récent au plus ancien : montant, devise, mission, et `refunded` (la mission a été annulée, donc remboursée). Filtrable par `mission_id`. |
 | `get_proof_file` | Lit un fichier de preuve envoyé par le Payworker : les photos reviennent comme **images** que l'agent peut regarder, les PDF comme documents intégrés (15 Mo au maximum). Chaque preuve indique son analyse antivirus (`virus_scan: clean`, ou `not_scanned` avec un avertissement si l'analyse était désactivée côté AIWorkPay). |
 | `approve_result` | Accepte le résultat livré : paie le Payworker (90 %). Aperçu puis `confirm`. Irréversible. |
 | `request_changes` | Renvoie le résultat au Payworker avec un commentaire (3 fois au maximum). Aucun mouvement d'argent. |
@@ -66,6 +68,8 @@ create_mission({
   Côté AIWorkPay, chaque clé a ses **permissions** (`missions:read`, `missions:write`,
   `missions:approve`), ses **plafonds** (par mission, par mois) et son **débit** limité.
   Les refus remontent à l'agent avec un code stable et une indication (`hint`) sur quoi faire.
+- **Compte en lecture seule, limité à la clé** : `get_account` et `list_transactions` ne montrent que ce que la clé
+  de l'agent possède ; jamais le hash de la clé, un identifiant Stripe ni les données d'un autre agent.
 - **Résultats non fiables par nature** : le contenu livré par un humain (texte, photos, PDF)
   est signalé comme donnée à vérifier, jamais comme instruction (protection contre
   l'injection de prompt).
@@ -88,8 +92,10 @@ create_mission({
 
 ## Installation
 
-Prérequis : Node.js 20+ et une instance AIWorkPay incluant l'API agent
-([Aiworkpay-v2#1](https://github.com/cortexAI-2025/Aiworkpay-v2/pull/1) : V1, V1.1, V1.2 et fichiers de preuve).
+Prérequis : Node.js 20+ et une instance AIWorkPay ([Aiworkpay-v2](https://github.com/cortexAI-2025/Aiworkpay-v2))
+incluant l'API agent, les fichiers de preuve et, pour `get_account` / `list_transactions`, les routes
+`GET /api/account` et `GET /api/transactions`. Sur une instance plus ancienne ces deux outils répondent
+`NOT_FOUND` avec une indication ; les autres fonctionnent.
 
 ```bash
 npm ci
@@ -105,7 +111,7 @@ npm run build
       "command": "node",
       "args": ["/chemin/vers/aiworkpay-mcp-server/dist/index.js"],
       "env": {
-        "AIWORKPAY_BASE_URL": "https://aiworkpay.fr",
+        "AIWORKPAY_BASE_URL": "https://app.aiworkpay.fr",
         "AIWORKPAY_API_KEY": "awp_…"
       }
     }
@@ -113,7 +119,7 @@ npm run build
 }
 ```
 
-Avec Claude Code : `claude mcp add aiworkpay -e AIWORKPAY_BASE_URL=https://aiworkpay.fr -e AIWORKPAY_API_KEY=awp_… -- node /chemin/vers/dist/index.js`
+Avec Claude Code : `claude mcp add aiworkpay -e AIWORKPAY_BASE_URL=https://app.aiworkpay.fr -e AIWORKPAY_API_KEY=awp_… -- node /chemin/vers/dist/index.js`
 
 ## Transport HTTP (agents distants)
 
@@ -123,7 +129,7 @@ agent, `Authorization: Bearer awp_…` ; le serveur n'en stocke aucune et la tra
 telle quelle à AIWorkPay, qui applique permissions et plafonds.
 
 ```bash
-AIWORKPAY_BASE_URL=https://aiworkpay.fr \
+AIWORKPAY_BASE_URL=https://app.aiworkpay.fr \
 MCP_HTTP_HOST=127.0.0.1 MCP_HTTP_PORT=3333 \
 MCP_ALLOWED_HOSTS=mcp.aiworkpay.fr \
 npm run start:http
@@ -135,6 +141,8 @@ npm run start:http
 | `MCP_HTTP_PORT` | `3333` | Port d'écoute. |
 | `MCP_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Valeurs acceptées de l'en-tête `Host` (protection contre le DNS rebinding). |
 | `MCP_ALLOWED_ORIGINS` | *(vide)* | Origines navigateur acceptées ; une requête avec un autre `Origin` est refusée. |
+| `MCP_TRUSTED_PROXY_HOPS` | `1` | Nombre de proxys devant ce serveur (1 sur Railway seul, 2 avec Cloudflare) : l'adresse du client est l'entrée de `X-Forwarded-For` que ces proxys ont ajoutée, jamais celle que le client a écrite. `0` : adresse de la socket. |
+| `AIWORKPAY_FORWARD_TOKEN` | *(vide)* | Secret partagé (16 caractères au moins) avec `TRUSTED_FORWARDER_TOKEN` d'AIWorkPay : ce serveur transmet l'adresse réelle de chaque client, pour que les limites de débit d'AIWorkPay s'appliquent par client et non à toute l'infrastructure MCP. |
 
 Les variables `AIWORKPAY_*` (hors clé) s'appliquent aussi ; la limite de créations par
 heure est comptée **par agent**. Déployez derrière un reverse proxy qui termine le
@@ -154,13 +162,46 @@ Client MCP distant, par exemple :
 }
 ```
 
+### Protection contre les devinettes de clés
+
+Après **10 échecs d'authentification en 10 minutes** depuis une même adresse, ce serveur répond `429` (avec `Retry-After`) sans
+interroger AIWorkPay ; une clé refusée par AIWorkPay est aussi refusée localement pendant une minute. Sans cela, les
+tentatives d'un attaquant épuiseraient la limite d'échecs qu'AIWorkPay applique à l'adresse du serveur MCP, partagée par
+tous les agents. Avec `AIWORKPAY_FORWARD_TOKEN` configuré des deux côtés, AIWorkPay compte aussi par client.
+
+### Vérifier un déploiement
+
+`scripts/smoke-remote.mjs` contrôle un serveur déployé **sans rien créer ni payer** : `/healthz`, refus (sans clé, origine
+étrangère, JSON invalide, autre schéma d'authentification), puis, avec une clé de test, `initialize`, `tools/list` (les 13
+outils attendus) et `get_account` (lecture seule).
+
+```bash
+npm run smoke:remote -- https://mcp.aiworkpay.fr
+AIWORKPAY_API_KEY=awp_… npm run smoke:remote -- https://mcp.aiworkpay.fr
+```
+
+## Suivre une mission : interrogation ou webhooks
+
+Par le MCP, l'agent interroge `get_mission_status` (avec parcimonie : un humain met de quelques minutes à
+plusieurs jours). Un agent qui a **son propre serveur** peut à la place être prévenu à chaque étape par
+les **webhooks sortants** d'AIWorkPay (`mission.published`, `assigned`, `started`, `delivered`,
+`changes_requested`, `completed`, `canceled`), signés en HMAC-SHA256 et retentés en cas d'échec.
+Ils se configurent avec la même clé API (`PUT /api/webhook`, voir le README d'Aiworkpay-v2), **par le
+serveur de l'agent et pas par ce MCP** : le secret de signature ne doit jamais passer par le contexte
+du modèle. Après un événement `mission.delivered`, l'agent reprend avec `get_mission_result`.
+
 ## Développement
 
 ```bash
 npm run typecheck
 npm test        # tests unitaires + client MCP réel connecté en mémoire à une fausse API AIWorkPay
 npm run build
+E2E_CONTROL_URL=http://127.0.0.1:4100 npm run test:e2e   # bout en bout : vrai backend AiWorkPay + Stripe simulé
 ```
+
+Le test de bout en bout (`test/e2e/`) a besoin de l'environnement isolé d'`Aiworkpay-v2` (`npm run e2e:harness` dans ce dépôt :
+vrai serveur, PostgreSQL, Stripe simulé, Payworker de test). Il rejoue le scénario « horaires et photo de façade » par HTTP et par
+stdio, et les refus (permissions, plafonds, isolation, annulation, panne Stripe, injection de consignes dans un résultat).
 
 
 ### Financial authorization

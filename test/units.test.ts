@@ -244,3 +244,18 @@ describe('reservation and response safety', () => {
     expect(canceled).toBe(true);
   });
 });
+
+describe('CreationLimiter.available', () => {
+  it('counts what is left in the rolling hour', async () => {
+    const { CreationLimiter } = await import('../src/safety/creationLimiter.js');
+    let now = 0;
+    const limiter = new CreationLimiter(3, () => now);
+    expect(limiter.available()).toBe(3);
+    limiter.reserve('a'); limiter.record('a');
+    limiter.reserve('b'); limiter.record('b');
+    expect(limiter.available()).toBe(1);
+    now = 61 * 60 * 1000;
+    expect(limiter.available()).toBe(3);
+    expect(new CreationLimiter(0).available()).toBe(0);
+  });
+});
