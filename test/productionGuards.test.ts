@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkProductionConfig, productionReport } from '../src/productionGuards.js';
+import { checkProductionConfig, forwarderFingerprint, productionReport } from '../src/productionGuards.js';
 
 const TOKEN = 'Tok3n-that-must-never-appear-in-a-message-0123456789';
 const good = {
@@ -92,5 +92,17 @@ describe('MCP production startup guards', () => {
       expect(productionReport({ NODE_ENV: nodeEnv, AIWORKPAY_API_KEY: 'x', AIWORKPAY_REQUIRE_CONFIRMATION: 'false' })).toBeNull();
     }
     expect(productionReport({ NODE_ENV: 'production' })).not.toBeNull();
+  });
+});
+
+describe('forwarder secret fingerprint', () => {
+  it('is 8 hex characters of SHA-256, identical to the backend\'s computation, and never contains the secret', () => {
+    // The same vector is asserted in the backend repository (test/production-guards.cjs)
+    expect(forwarderFingerprint({ AIWORKPAY_FORWARD_TOKEN: 'shared-vector-token-0123456789abcdef' })).toBe('37a88646');
+    expect(forwarderFingerprint({})).toBeNull();
+    const secret = 'another-secret-value-that-must-not-leak-777';
+    const fingerprint = forwarderFingerprint({ AIWORKPAY_FORWARD_TOKEN: secret })!;
+    expect(fingerprint).toMatch(/^[0-9a-f]{8}$/);
+    expect(secret.includes(fingerprint)).toBe(false);
   });
 });

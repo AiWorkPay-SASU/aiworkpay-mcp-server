@@ -47,6 +47,9 @@ describe('real startup of the HTTP server', () => {
     const result = await start(base());
     expect(result.started, result.output).toBe(true);
     expect(result.output).not.toContain('config.refused');
+    // The startup log carries the fingerprint of the shared secret (to compare with the backend's), never the secret
+    expect(result.output).toMatch(/"fingerprint":"[0-9a-f]{8}"/);
+    expect(result.output).not.toContain(TOKEN);
   }, 30_000);
 
   for (const [name, patch, expected] of [

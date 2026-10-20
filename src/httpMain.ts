@@ -2,7 +2,7 @@
 import { ConfigError, loadHttpConfig } from './config.js';
 import { createHttpServer } from './http.js';
 import { log } from './log.js';
-import { productionReport } from './productionGuards.js';
+import { forwarderFingerprint, productionReport } from './productionGuards.js';
 import { SERVER_VERSION } from './server.js';
 
 // Production only: refuse an unsafe or incomplete configuration, naming settings but never printing a value
@@ -26,6 +26,9 @@ try {
   }
   throw error;
 }
+
+const fingerprint = forwarderFingerprint();
+if (fingerprint) log('info', 'config.forwarder_fingerprint', { fingerprint, note: 'the backend logs the same value when it holds the same secret' });
 
 const server = createHttpServer(config);
 server.listen(config.port, config.host, () => {

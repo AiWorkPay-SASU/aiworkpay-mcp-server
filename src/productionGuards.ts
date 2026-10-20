@@ -8,6 +8,8 @@
  * Applies when NODE_ENV=production (the Dockerfile sets it) and only to the HTTP entry point (src/httpMain.ts): development, tests
  * and the stdio transport are untouched.
  */
+import { createHash } from 'node:crypto';
+
 export interface ConfigReport {
   problems: string[];
   warnings: string[];
@@ -87,4 +89,14 @@ export function checkProductionConfig(env: Env = process.env): ConfigReport {
 /** Returns the report when production rules apply, or null (development, tests, anything but NODE_ENV=production). */
 export function productionReport(env: Env = process.env): ConfigReport | null {
   return env.NODE_ENV === 'production' ? checkProductionConfig(env) : null;
+}
+
+/**
+ * Eight hex characters of the SHA-256 of AIWORKPAY_FORWARD_TOKEN, computed exactly like the backend's startup log (`forwarder secret
+ * fingerprint`): the operator compares the two lines to confirm both services hold the same secret, without either log ever containing
+ * it. A mismatch is otherwise silent. Reveals nothing of a random secret of 16+ characters.
+ */
+export function forwarderFingerprint(env: Env = process.env): string | null {
+  const token = env.AIWORKPAY_FORWARD_TOKEN;
+  return token ? createHash('sha256').update(token).digest('hex').slice(0, 8) : null;
 }
