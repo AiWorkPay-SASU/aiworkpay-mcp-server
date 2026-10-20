@@ -24,7 +24,7 @@ AutoGen a révélé un défaut réel, corrigé en 0.7.0 : les schémas d'entrée
 (JSON Schema valide) qu'AutoGen ne sait pas résoudre. Les schémas sont désormais autonomes (`test/contract.test.ts`).
 Note : `autogen-ext` 0.7.5 est incompatible avec `mcp` 2.x (import cassé) ; installez `mcp<2` avec lui.
 
-Scripts de vérification : conservés dans le rapport de session ; ils tiennent en une quinzaine de lignes par framework.
+Scripts de vérification : `scripts/compat/` (une quinzaine de lignes par framework).
 
 ## Documenté, non exécuté
 
