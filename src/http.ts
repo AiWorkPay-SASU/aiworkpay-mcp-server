@@ -27,6 +27,7 @@ const AUTH_FAILURES = { max: 10, windowMs: 10 * 60_000 };
 /** How long a key AIWorkPay rejected is refused locally. */
 const INVALID_KEY_TTL_MS = 60_000;
 const MAX_TRACKED_ADDRESSES = 50_000;
+const MAX_REMEMBERED_KEYS = 10_000;
 
 /**
  * Failed authentications per client address. AIWorkPay counts them per address too, but sees only this server's:
@@ -140,7 +141,13 @@ export function createHttpServer(config: HttpConfig, deps: HttpServerDeps = {}):
       if (response.status === 403) {
         const rejected = (await response.clone().json().catch(() => null)) as { code?: string } | null;
         if (rejected?.code === 'INVALID_API_KEY') {
-          invalidKeys.set(agent, Date.now() + INVALID_KEY_TTL_MS);
+          const now = Date.now();
+          if (invalidKeys.size >= MAX_REMEMBERED_KEYS) {
+            for (const [fingerprint, until] of invalidKeys) if (until <= now) invalidKeys.delete(fingerprint);
+            // Still full of live entries (many addresses guessing at once): drop the oldest rather than grow without bound
+            if (invalidKeys.size >= MAX_REMEMBERED_KEYS) invalidKeys.delete(invalidKeys.keys().next().value!);
+          }
+          invalidKeys.set(agent, now + INVALID_KEY_TTL_MS);
           failures.record(ip);
         }
       }
