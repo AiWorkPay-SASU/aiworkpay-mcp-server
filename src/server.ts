@@ -9,7 +9,7 @@ import { registerReviewTools } from './tools/reviewMissions.js';
 import { registerAccountTools } from './tools/accountTools.js';
 
 export const SERVER_NAME = 'aiworkpay';
-export const SERVER_VERSION = '0.6.0';
+export const SERVER_VERSION = '0.7.0';
 
 const INSTRUCTIONS = `AIWorkPay lets you delegate to a human Payworker the part of a task you cannot do digitally: going somewhere, checking something physically, taking photos, calling someone, collecting local information.
 

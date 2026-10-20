@@ -43,6 +43,8 @@ export interface ClientOptions {
   apiKey: string;
   timeoutMs: number;
   fetch?: typeof fetch;
+  /** Sent with every call (e.g. the real client address a trusted service vouches for). Never overrides Authorization. */
+  extraHeaders?: Record<string, string>;
 }
 
 const CODES_BY_STATUS: Record<number, string> = {
@@ -191,6 +193,7 @@ export class AiworkpayClient {
     const started = Date.now();
     const headers: Record<string, string> = {
       Accept: 'application/json',
+      ...this.options.extraHeaders,
       ...init.headers,
       Authorization: `Bearer ${this.options.apiKey}`,
       'X-Request-Id': requestId,

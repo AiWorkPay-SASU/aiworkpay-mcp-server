@@ -38,6 +38,8 @@ const httpSchema = z.object({
   MCP_HTTP_PORT: z.coerce.number().int().min(1).max(65535).default(3333),
   MCP_ALLOWED_HOSTS: commaList('localhost,127.0.0.1'),
   MCP_ALLOWED_ORIGINS: commaList(''),
+  MCP_TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+  AIWORKPAY_FORWARD_TOKEN: z.string().min(16, 'must be at least 16 characters').optional(),
 });
 
 /** Settings shared by every transport: where AIWorkPay is and the safety limits. */
@@ -66,6 +68,13 @@ export interface HttpConfig extends ServerConfig {
   allowedHosts: string[];
   /** Accepted browser origins; requests without an Origin header are not affected. */
   allowedOrigins: string[];
+  /**
+   * Proxies in front of this server (1 on Railway): the X-Forwarded-For entry that many places from the right is the
+   * client. 0 uses the socket address.
+   */
+  trustedProxyHops?: number;
+  /** Shared secret with AIWorkPay (TRUSTED_FORWARDER_TOKEN): lets this server vouch for each client's real address. */
+  forwardToken?: string;
 }
 
 export class ConfigError extends Error {}
@@ -105,6 +114,8 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): HttpConfig
     port: h.MCP_HTTP_PORT,
     allowedHosts: h.MCP_ALLOWED_HOSTS.map((host) => host.toLowerCase()),
     allowedOrigins: h.MCP_ALLOWED_ORIGINS,
+    trustedProxyHops: h.MCP_TRUSTED_PROXY_HOPS,
+    forwardToken: h.AIWORKPAY_FORWARD_TOKEN,
   };
 }
 

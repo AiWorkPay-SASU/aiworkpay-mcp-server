@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import http from 'node:http';
+import { isIP } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { AiworkpayClient } from './api/client.js';
 import type { HttpConfig } from './config.js';
@@ -21,6 +22,38 @@ import { createServer } from './server.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_TRACKED_AGENTS = 10_000;
+/** Failed authentications tolerated per client address and window, before AIWorkPay is no longer asked. */
+const AUTH_FAILURES = { max: 10, windowMs: 10 * 60_000 };
+/** How long a key AIWorkPay rejected is refused locally. */
+const INVALID_KEY_TTL_MS = 60_000;
+const MAX_TRACKED_ADDRESSES = 50_000;
+
+/**
+ * Failed authentications per client address. AIWorkPay counts them per address too, but sees only this server's:
+ * without this, one attacker's guesses would use up the allowance shared by every agent behind the server.
+ */
+class FailureLimiter {
+  private readonly entries = new Map<string, { count: number; resetAt: number }>();
+  blockedFor(ip: string, now = Date.now()): number {
+    const entry = this.entries.get(ip);
+    return entry && entry.resetAt > now && entry.count >= AUTH_FAILURES.max ? Math.ceil((entry.resetAt - now) / 1000) : 0;
+  }
+  record(ip: string, now = Date.now()): void {
+    const entry = this.entries.get(ip);
+    if (entry && entry.resetAt > now) entry.count += 1;
+    else {
+      if (this.entries.size >= MAX_TRACKED_ADDRESSES) this.entries.delete(this.entries.keys().next().value!);
+      this.entries.set(ip, { count: 1, resetAt: now + AUTH_FAILURES.windowMs });
+    }
+  }
+}
+
+/** The caller's address: what our own proxies appended to X-Forwarded-For (never what the client wrote), else the socket's. */
+export function clientAddress(req: http.IncomingMessage, hops: number): string {
+  const chain = String(req.headers['x-forwarded-for'] ?? '').split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (hops >= 1 && chain.length > 0) return chain[Math.max(0, chain.length - hops)]!;
+  return req.socket.remoteAddress ?? 'unknown';
+}
 
 export interface HttpServerDeps {
   /** Injected in tests. */
@@ -40,6 +73,9 @@ export function createHttpServer(config: HttpConfig, deps: HttpServerDeps = {}):
     }
     return limiter;
   };
+
+  const failures = new FailureLimiter();
+  const invalidKeys = new Map<string, number>(); // key fingerprint → refused until
 
   return http.createServer((req, res) => {
     handle(req, res).catch((error: unknown) => {
@@ -77,13 +113,47 @@ export function createHttpServer(config: HttpConfig, deps: HttpServerDeps = {}):
       return jsonRpcError(res, 401, -32001, 'Missing AIWorkPay agent key: send Authorization: Bearer awp_...');
     }
 
+    const agent = createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
+    const ip = clientAddress(req, config.trustedProxyHops ?? 1);
+
+    const wait = failures.blockedFor(ip);
+    if (wait > 0) {
+      res.setHeader('Retry-After', String(wait));
+      return jsonRpcError(res, 429, -32002, 'Too many failed authentications from this address: try again later');
+    }
+    const refusedUntil = invalidKeys.get(agent);
+    if (refusedUntil && refusedUntil > Date.now()) {
+      failures.record(ip);
+      res.setHeader('WWW-Authenticate', 'Bearer realm="aiworkpay", error="invalid_token"');
+      return jsonRpcError(res, 401, -32001, 'Invalid, expired or revoked AIWorkPay agent key');
+    }
+
     const body = await readJson(req);
     if (body === TOO_LARGE) return jsonRpcError(res, 413, -32600, 'Request body too large');
     if (body === INVALID) return jsonRpcError(res, 400, -32700, 'Parse error');
 
-    // Identify the agent in logs and limits without ever keeping its key.
-    const agent = createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
-    const client = new AiworkpayClient({ baseUrl: config.baseUrl, apiKey, timeoutMs: config.timeoutMs, fetch: deps.fetch });
+    // Identify the agent in logs and limits without ever keeping its key. A key AIWorkPay rejects is remembered for a
+    // minute and counted against the caller's address.
+    const upstream = deps.fetch ?? fetch;
+    const watched: typeof fetch = async (input, init) => {
+      const response = await upstream(input, init);
+      if (response.status === 403) {
+        const rejected = (await response.clone().json().catch(() => null)) as { code?: string } | null;
+        if (rejected?.code === 'INVALID_API_KEY') {
+          invalidKeys.set(agent, Date.now() + INVALID_KEY_TTL_MS);
+          failures.record(ip);
+        }
+      }
+      return response;
+    };
+    const client = new AiworkpayClient({
+      baseUrl: config.baseUrl,
+      apiKey,
+      timeoutMs: config.timeoutMs,
+      fetch: watched,
+      // With the shared token AIWorkPay attributes limits to the real client instead of to this server
+      extraHeaders: config.forwardToken && isIP(ip) ? { 'X-AIWorkPay-Client-IP': ip, 'X-AIWorkPay-Forward-Token': config.forwardToken } : undefined,
+    });
     const server = createServer({ config, client, limiter: limiterFor(agent) });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
 
@@ -99,7 +169,7 @@ export function createHttpServer(config: HttpConfig, deps: HttpServerDeps = {}):
 }
 
 function bearerKey(header: string | undefined): string | null {
-  const match = header?.match(/^Bearer\s+(awp_[A-Za-z0-9]{1,200})$/);
+  const match = header?.match(/^[Bb]earer\s+(awp_[A-Za-z0-9]{1,200})$/);
   return match?.[1] ?? null;
 }
 

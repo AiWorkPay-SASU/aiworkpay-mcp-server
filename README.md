@@ -141,6 +141,8 @@ npm run start:http
 | `MCP_HTTP_PORT` | `3333` | Port d'écoute. |
 | `MCP_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Valeurs acceptées de l'en-tête `Host` (protection contre le DNS rebinding). |
 | `MCP_ALLOWED_ORIGINS` | *(vide)* | Origines navigateur acceptées ; une requête avec un autre `Origin` est refusée. |
+| `MCP_TRUSTED_PROXY_HOPS` | `1` | Nombre de proxys devant ce serveur (1 sur Railway seul, 2 avec Cloudflare) : l'adresse du client est l'entrée de `X-Forwarded-For` que ces proxys ont ajoutée, jamais celle que le client a écrite. `0` : adresse de la socket. |
+| `AIWORKPAY_FORWARD_TOKEN` | *(vide)* | Secret partagé (16 caractères au moins) avec `TRUSTED_FORWARDER_TOKEN` d'AIWorkPay : ce serveur transmet l'adresse réelle de chaque client, pour que les limites de débit d'AIWorkPay s'appliquent par client et non à toute l'infrastructure MCP. |
 
 Les variables `AIWORKPAY_*` (hors clé) s'appliquent aussi ; la limite de créations par
 heure est comptée **par agent**. Déployez derrière un reverse proxy qui termine le
@@ -160,6 +162,24 @@ Client MCP distant, par exemple :
 }
 ```
 
+### Protection contre les devinettes de clés
+
+Après **10 échecs d'authentification en 10 minutes** depuis une même adresse, ce serveur répond `429` (avec `Retry-After`) sans
+interroger AIWorkPay ; une clé refusée par AIWorkPay est aussi refusée localement pendant une minute. Sans cela, les
+tentatives d'un attaquant épuiseraient la limite d'échecs qu'AIWorkPay applique à l'adresse du serveur MCP, partagée par
+tous les agents. Avec `AIWORKPAY_FORWARD_TOKEN` configuré des deux côtés, AIWorkPay compte aussi par client.
+
+### Vérifier un déploiement
+
+`scripts/smoke-remote.mjs` contrôle un serveur déployé **sans rien créer ni payer** : `/healthz`, refus (sans clé, origine
+étrangère, JSON invalide, autre schéma d'authentification), puis, avec une clé de test, `initialize`, `tools/list` (les 13
+outils attendus) et `get_account` (lecture seule).
+
+```bash
+npm run smoke:remote -- https://mcp.aiworkpay.fr
+AIWORKPAY_API_KEY=awp_… npm run smoke:remote -- https://mcp.aiworkpay.fr
+```
+
 ## Suivre une mission : interrogation ou webhooks
 
 Par le MCP, l'agent interroge `get_mission_status` (avec parcimonie : un humain met de quelques minutes à
@@ -176,7 +196,12 @@ du modèle. Après un événement `mission.delivered`, l'agent reprend avec `get
 npm run typecheck
 npm test        # tests unitaires + client MCP réel connecté en mémoire à une fausse API AIWorkPay
 npm run build
+E2E_CONTROL_URL=http://127.0.0.1:4100 npm run test:e2e   # bout en bout : vrai backend AiWorkPay + Stripe simulé
 ```
+
+Le test de bout en bout (`test/e2e/`) a besoin de l'environnement isolé d'`Aiworkpay-v2` (`npm run e2e:harness` dans ce dépôt :
+vrai serveur, PostgreSQL, Stripe simulé, Payworker de test). Il rejoue le scénario « horaires et photo de façade » par HTTP et par
+stdio, et les refus (permissions, plafonds, isolation, annulation, panne Stripe, injection de consignes dans un résultat).
 
 
 ### Financial authorization

@@ -9,11 +9,12 @@ import { missionView } from '../domain/missionStatus.js';
 import { missionResultView } from './readMissions.js';
 import { ok, runTool } from './result.js';
 
-const identifier = z.string().trim().min(1).max(200);
+// A function, not a shared instance: a reused schema is emitted as a `$ref`, which several agent frameworks cannot resolve
+const identifier = () => z.string().trim().min(1).max(200);
 const contextSchema = z.object({
-  swarm_id: identifier,
-  task_id: identifier,
-  handoff_id: identifier.default('primary').describe('Stable identifier per human subtask. Reuse on retry; change for a distinct mission.'),
+  swarm_id: identifier(),
+  task_id: identifier(),
+  handoff_id: identifier().default('primary').describe('Stable identifier per human subtask. Reuse on retry; change for a distinct mission.'),
 }).strict();
 const { confirm: _confirm, client_reference: _reference, ...missionFields } = createMissionInputSchema;
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
