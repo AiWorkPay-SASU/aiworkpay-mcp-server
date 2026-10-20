@@ -2,7 +2,19 @@
 import { ConfigError, loadHttpConfig } from './config.js';
 import { createHttpServer } from './http.js';
 import { log } from './log.js';
+import { productionReport } from './productionGuards.js';
 import { SERVER_VERSION } from './server.js';
+
+// Production only: refuse an unsafe or incomplete configuration, naming settings but never printing a value
+const report = productionReport();
+if (report) {
+  for (const warning of report.warnings) log('warn', 'config.warning', { message: warning });
+  if (report.problems.length > 0) {
+    for (const problem of report.problems) log('error', 'config.refused', { message: problem });
+    process.stderr.write(`aiworkpay-mcp-http: refusing to start: ${report.problems.length} unsafe or incomplete production setting(s), listed above.\n`);
+    process.exit(1);
+  }
+}
 
 let config;
 try {

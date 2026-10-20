@@ -1,5 +1,12 @@
 # Changelog
 
+## Non publié
+
+- **Démarrage en production** (`NODE_ENV=production`, transport HTTP) : refus de démarrer, sans afficher de secret, si `MCP_TRUSTED_PROXY_HOPS` n'est pas posé
+  explicitement (1 à 5, plus de valeur implicite), si `AIWORKPAY_FORWARD_TOKEN` est absent, trop court (< 16) ou non résolu, si `AIWORKPAY_BASE_URL` n'est pas une
+  adresse https publique, si `MCP_ALLOWED_HOSTS` ne contient que `localhost`, si `AIWORKPAY_API_KEY` est définie ou si la confirmation en deux temps est désactivée.
+  Développement, tests et stdio inchangés. Tests unitaires et tests de démarrage réels.
+
 ## 0.7.0
 
 - **Sécurité** : après 10 échecs d'authentification en 10 minutes depuis une même adresse, `429` sans interroger AIWorkPay ;

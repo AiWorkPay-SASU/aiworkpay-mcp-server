@@ -14,6 +14,11 @@
 | DNS rebinding / origines | Contrôle de `Host` et d'`Origin` | `test/http.test.ts` |
 | Clé en clair sur le réseau | HTTPS obligatoire pour `AIWORKPAY_BASE_URL` (sauf localhost) ; TLS terminé par le proxy | `test/units.test.ts` |
 
+## Démarrage en production
+
+En production le serveur HTTP refuse de démarrer avec une configuration qui affaiblit la sécurité (voir le README, « Démarrage en production ») : nombre de proxys non
+déclaré, secret partagé avec le backend absent ou trop court, clé partagée, confirmation désactivée. Les messages ne contiennent aucune valeur.
+
 ## Limites connues
 
 - **Authentification par clé statique, sans OAuth** : les annuaires et clients qui exigent OAuth 2.0 (ChatGPT, annuaire des
