@@ -106,7 +106,7 @@ export function missionView(mission: Mission, now = new Date()) {
     priority: mission.priority.toLowerCase(),
     deadline: mission.deadline,
     is_past_deadline: pastDeadline && !finished,
-    assigned: Boolean(mission.assignedToUserId),
+    assigned: mission.assigned ?? Boolean(mission.assignedToUserId),
     result_available: isResultAvailable(status),
     delivered_at: mission.deliveredAt ?? null,
     revisions_requested: mission.revisionCount ?? 0,
