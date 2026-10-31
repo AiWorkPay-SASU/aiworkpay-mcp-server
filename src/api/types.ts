@@ -51,6 +51,9 @@ export interface Mission {
   deliveredAt?: string | null;
   revisionFeedback?: string | null;
   revisionCount?: number;
+  /** Agent-facing views expose only this boolean; the internal assignee id is never sent to agents. */
+  assigned?: boolean;
+  /** Legacy: no longer returned by the backend to agents; kept optional for older servers. */
   assignedToUserId?: string | null;
   createdAt: string;
   updatedAt: string;
