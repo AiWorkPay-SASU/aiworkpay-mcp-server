@@ -4,6 +4,7 @@ import { ConfigError, loadConfig, loadHttpConfig } from '../src/config.js';
 import { hostAllowed } from '../src/http.js';
 import { idempotencyKeyFor, renderDescription, toCreateRequest, type MissionInput } from '../src/domain/missionInput.js';
 import { missionView, toAgentStatus } from '../src/domain/missionStatus.js';
+import { payworkerAmount } from '../src/tools/reviewMissions.js';
 import { CreationLimiter } from '../src/safety/creationLimiter.js';
 import { assertSpendAllowed, GuardError } from '../src/safety/spendGuard.js';
 import type { Mission } from '../src/api/types.js';
@@ -257,5 +258,14 @@ describe('CreationLimiter.available', () => {
     now = 61 * 60 * 1000;
     expect(limiter.available()).toBe(3);
     expect(new CreationLimiter(0).available()).toBe(0);
+  });
+});
+
+describe('approve_result preview amount', () => {
+  it('uses the backend rounding: parseFloat((budget * 0.9).toFixed(2))', () => {
+    // 0.95 * 0.9 = 0.855…: the backend pays 0.85, Math.round(x * 0.9 * 100) / 100 would announce 0.86.
+    expect(payworkerAmount(0.95)).toBe(0.85);
+    expect(payworkerAmount(1.45)).toBe(1.3);
+    expect(payworkerAmount(15)).toBe(13.5);
   });
 });
