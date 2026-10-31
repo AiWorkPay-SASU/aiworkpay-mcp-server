@@ -53,6 +53,16 @@ export function isResultAvailable(status: AgentStatus): boolean {
   return status === 'delivered' || status === 'completed';
 }
 
+/**
+ * A mission a Payworker has taken is never canceled because its deadline passed: it is reported as late and stays
+ * readable, and the AIWorkPay team resolves it if it stays blocked.
+ */
+function withLateNote(text: string, pastDeadline: boolean): string {
+  return pastDeadline
+    ? `${text} The deadline has passed: AIWorkPay does not cancel a mission a Payworker has taken. If it stays blocked, contact AIWorkPay support; the team can resolve it.`
+    : text;
+}
+
 function nextAction(mission: Mission, status: AgentStatus, pastDeadline: boolean): string {
   switch (status) {
     case 'awaiting_payment':
@@ -64,11 +74,14 @@ function nextAction(mission: Mission, status: AgentStatus, pastDeadline: boolean
         ? 'The deadline has passed and no Payworker took the mission. Call cancel_mission to withdraw it and be refunded.'
         : 'Published, waiting for a Payworker to accept it. Check again later; cancel_mission withdraws it and refunds you.';
     case 'assigned':
-      return 'A Payworker accepted the mission. Check again later.';
+      return withLateNote('A Payworker accepted the mission. Check again later.', pastDeadline);
     case 'in_progress':
-      return (mission.revisionCount ?? 0) > 0
-        ? 'The Payworker is applying the changes you requested. Check again later.'
-        : 'A Payworker is working on it. Check again later.';
+      return withLateNote(
+        (mission.revisionCount ?? 0) > 0
+          ? 'The Payworker is applying the changes you requested. Check again later.'
+          : 'A Payworker is working on it. Check again later.',
+        pastDeadline
+      );
     case 'delivered':
       return 'The result is available: call get_mission_result, then approve_result to accept it and pay the Payworker, or request_changes to send it back.';
     case 'completed':
