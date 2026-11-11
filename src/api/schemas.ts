@@ -20,7 +20,7 @@ export const accountSchema = z.object({
   key: z.object({ id: z.string(), label: z.string(), prefix: z.string(), scopes: z.array(z.string()), active: z.boolean(), expiresAt: z.string().nullable(), lastUsedAt: z.string().nullable(), createdAt: z.string() }).passthrough(),
   limits: z.object({ maxMissionBudget: money.nullable(), monthlyBudget: money.nullable() }).passthrough(),
   usage: z.object({ monthStart: z.string(), committedThisMonth: money, remainingThisMonth: money.nullable(), totalPaid: money, totalRefunded: money, netPaid: money }).passthrough(),
-  missions: z.object({ total: z.number().int().nonnegative(), byStatus: z.record(missionStatus, z.number().int().nonnegative()) }).passthrough(),
+  missions: z.object({ total: z.number().int().nonnegative(), byStatus: z.partialRecord(missionStatus, z.number().int().nonnegative()) }).passthrough(),
   webhook: z.object({ configured: z.boolean() }).passthrough(),
 }).passthrough();
 export const transactionsSchema = z.object({

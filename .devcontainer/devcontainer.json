@@ -1,0 +1,4 @@
+{
+  "name": "AIWorkPay MCP server — validation environment",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm"
+}

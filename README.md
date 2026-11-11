@@ -92,7 +92,7 @@ create_mission({
 
 ## Installation
 
-Prérequis : Node.js 20+ et une instance AIWorkPay ([Aiworkpay-v2](https://github.com/cortexAI-2025/Aiworkpay-v2))
+Prérequis : Node.js 20+ et une instance AIWorkPay ([Aiworkpay-v2](https://github.com/AiWorkPay-SASU/Aiworkpay-v2))
 incluant l'API agent, les fichiers de preuve et, pour `get_account` / `list_transactions`, les routes
 `GET /api/account` et `GET /api/transactions`. Sur une instance plus ancienne ces deux outils répondent
 `NOT_FOUND` avec une indication ; les autres fonctionnent.
