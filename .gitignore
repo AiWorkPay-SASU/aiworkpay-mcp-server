@@ -3,3 +3,5 @@ dist/
 coverage/
 .env
 *.log
+validation-report.txt
+harness.log
