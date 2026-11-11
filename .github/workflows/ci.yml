@@ -21,6 +21,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Production dependencies have no known high or critical vulnerability
+        run: npm audit --omit=dev --audit-level=high
 
   # Le scénario complet contre le vrai backend AIWorkPay (serveur + PostgreSQL + Stripe simulé, aucun secret ni paiement réel)
   e2e:
