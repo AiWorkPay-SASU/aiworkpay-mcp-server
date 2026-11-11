@@ -11,6 +11,15 @@ import { ok, runTool } from './result.js';
 const MAX_REVISIONS = 3;
 const PAYWORKER_SHARE = 0.9;
 
+/**
+ * What the backend pays the Payworker: `parseFloat((budget * 0.9).toFixed(2))` (lib/missionPayment.ts of Aiworkpay-v2).
+ * The preview must use the very same rounding: `Math.round(x * 0.9 * 100) / 100` differs by one cent on about 3 % of
+ * budgets (0.95 gives 0.86 there, and the backend pays 0.85).
+ */
+export function payworkerAmount(budget: number): number {
+  return parseFloat((budget * PAYWORKER_SHARE).toFixed(2));
+}
+
 const missionId = z.string().trim().min(1).max(100).describe('The mission_id returned by create_mission.');
 
 const confirm = z
@@ -61,7 +70,7 @@ export function registerReviewTools(server: McpServer, deps: { client: Aiworkpay
             title: view.title,
             budget: view.budget,
             currency: view.currency,
-            payworker_receives: Math.round(view.budget * PAYWORKER_SHARE * 100) / 100,
+            payworker_receives: payworkerAmount(view.budget),
             irreversible: true,
             next_action: 'If the result is acceptable, call approve_result again with confirm=true. Otherwise use request_changes.',
           });

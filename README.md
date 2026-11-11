@@ -92,7 +92,7 @@ create_mission({
 
 ## Installation
 
-Prérequis : Node.js 20+ et une instance AIWorkPay ([Aiworkpay-v2](https://github.com/cortexAI-2025/Aiworkpay-v2))
+Prérequis : Node.js 20+ et une instance AIWorkPay ([Aiworkpay-v2](https://github.com/AiWorkPay-SASU/Aiworkpay-v2))
 incluant l'API agent, les fichiers de preuve et, pour `get_account` / `list_transactions`, les routes
 `GET /api/account` et `GET /api/transactions`. Sur une instance plus ancienne ces deux outils répondent
 `NOT_FOUND` avec une indication ; les autres fonctionnent.
@@ -161,6 +161,24 @@ Client MCP distant, par exemple :
   }
 }
 ```
+
+### Démarrage en production : ce qui est obligatoire
+
+Avec `NODE_ENV=production` (le `Dockerfile` le fixe), `node dist/httpMain.js` **refuse de démarrer** (code de sortie 1, une ligne de journal `config.refused` par problème) si :
+
+| Réglage | Condition |
+| --- | --- |
+| `MCP_TRUSTED_PROXY_HOPS` | **posé explicitement**, entier de 1 à 5 : le nombre de proxys devant *ce* serveur (1 derrière Railway seul, 2 avec Cloudflare). Aucune valeur implicite en production. Il peut différer de `TRUSTED_PROXY_HOPS` du backend : chacun compte les proxys devant son propre service. |
+| `AIWORKPAY_FORWARD_TOKEN` | présent, **16 caractères au moins**, et pas une référence non résolue (`${{…}}`) ni un modèle (`<…>`) |
+| `AIWORKPAY_BASE_URL` | adresse **https publique** du backend (ni `http`, ni `localhost`) |
+| `MCP_ALLOWED_HOSTS` | au moins un hôte public (le défaut n'accepte que `localhost`) |
+| `AIWORKPAY_API_KEY` | **non définie** (chaque agent apporte sa clé ; une clé partagée donnerait à tous la même identité) |
+| `AIWORKPAY_REQUIRE_CONFIRMATION` | pas à `false`/`0` |
+
+Avertissements sans refus : plafonds d'opérateur laissés à leurs valeurs par défaut (50 par mission, 10 créations par heure, EUR) ; `MCP_HTTP_HOST` sur l'adresse de bouclage.
+Les messages nomment les réglages, **jamais leurs valeurs** : ils peuvent être copiés dans un ticket. Le secret n'est ni écrit ni mesuré dans les journaux.
+**Hors production** (développement, tests, `NODE_ENV` absent) et en transport **stdio**, rien de tout cela ne s'applique ; la valeur par défaut `MCP_TRUSTED_PROXY_HOPS=1` y reste.
+Le secret doit être **le même** que `TRUSTED_FORWARDER_TOKEN` du backend : ce serveur ne peut pas le vérifier lui-même (un secret différent est ignoré par le backend sans erreur). Contrôler les deux services ensemble avec `scripts/check-vars.cjs` du dépôt backend avant de saisir les variables dans Railway.
 
 ### Protection contre les devinettes de clés
 

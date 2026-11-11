@@ -24,7 +24,7 @@ const sharedSchema = z.object({
     .default('EUR')
     .transform((value) => value.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean))
     .pipe(z.array(z.string().regex(/^[A-Z]{3}$/, 'currencies are ISO 4217 codes, e.g. EUR')).min(1)),
-  AIWORKPAY_REQUIRE_CONFIRMATION: booleanFlag.default('true'),
+  AIWORKPAY_REQUIRE_CONFIRMATION: booleanFlag.default(true),
   AIWORKPAY_MAX_CREATIONS_PER_HOUR: z.coerce.number().int().nonnegative().default(10),
   AIWORKPAY_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 });
