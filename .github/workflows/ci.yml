@@ -54,10 +54,9 @@ jobs:
       # The runner downloads Aiworkpay-v2 at the pinned ref and the action copies it into ./backend.
       # Needs, once, on Aiworkpay-v2: Settings -> Actions -> General -> Access -> "Accessible from repositories in the
       # organization" (see the backend's docs/CI_SECRETS.md). Without it this job fails while it is being set up.
-      # TEMPORARY PIN: the backend branch that introduces the action. Re-pin to the backend's default branch
-      # (claude/aiworkpay-saas-platform-cdDRB) as soon as that branch is merged.
+      # Pinned to the backend's default branch (GitHub accepts no expression here): update it if that branch is renamed.
       - name: Export the backend source
-        uses: AiWorkPay-SASU/Aiworkpay-v2/.github/actions/export-source@claude/ci-cross-repo-e2e
+        uses: AiWorkPay-SASU/Aiworkpay-v2/.github/actions/export-source@claude/aiworkpay-saas-platform-cdDRB
         with:
           path: backend
       - uses: actions/setup-node@v4
