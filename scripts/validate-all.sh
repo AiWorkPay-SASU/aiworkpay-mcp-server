@@ -2,7 +2,7 @@
 # Runs every technical check of the MCP server and prints one PASS/FAIL/SKIP line per step. Never deploys, never touches production.
 #
 #   GitHub Codespaces (free quota) or any machine with Node 22:   bash scripts/validate-all.sh
-#   End-to-end against the real V2 backend (optional): clone cortexAI-2025/Aiworkpay-v2 (branch integration/backend-v2) next to this repo,
+#   End-to-end against the real V2 backend (optional): clone AiWorkPay-SASU/Aiworkpay-v2 (branch integration/backend-v2) next to this repo,
 #   have a local PostgreSQL 16 (see that repo's scripts/validate-all.sh) and run:  BACKEND_DIR=../Aiworkpay-v2 bash scripts/validate-all.sh
 # The report is written to validation-report.txt (git-ignored). No secret is needed or printed.
 set -u
