@@ -2,7 +2,7 @@
 # Runs every technical check of the MCP server and prints one PASS/FAIL/SKIP line per step. Never deploys, never touches production.
 #
 #   GitHub Codespaces (free quota) or any machine with Node 22:   bash scripts/validate-all.sh
-#   End-to-end against the real V2 backend (optional): clone AiWorkPay-SASU/Aiworkpay-v2 (branch integration/backend-v2) next to this repo,
+#   End-to-end against the real V2 backend (optional): clone AiWorkPay-SASU/Aiworkpay-v2 (default branch) next to this repo,
 #   have a local PostgreSQL 16 (see that repo's scripts/validate-all.sh) and run:  BACKEND_DIR=../Aiworkpay-v2 bash scripts/validate-all.sh
 # The report is written to validation-report.txt (git-ignored). No secret is needed or printed.
 set -u
@@ -29,7 +29,7 @@ if [ -n "${BACKEND_DIR:-}" ] && [ -d "$BACKEND_DIR" ]; then
   if grep -q E2E_HARNESS_READY harness.log 2>/dev/null; then step "End-to-end against the isolated V2 backend" npm run test:e2e; else FAIL=$((FAIL+1)); echo "FAIL  isolated backend did not start (see harness.log)"; fi
   pkill -f e2e/harness.cjs 2>/dev/null || true
 else
-  skip "End-to-end against the V2 backend" "set BACKEND_DIR to a checkout of Aiworkpay-v2 (integration/backend-v2)"
+  skip "End-to-end against the V2 backend" "set BACKEND_DIR to a checkout of Aiworkpay-v2 (default branch)"
 fi
 echo "---- $PASS passed, $FAIL failed, $SKIP skipped — details in $REPORT"
 [ "$FAIL" -eq 0 ]
